@@ -1,0 +1,13 @@
+# Model Configuration
+# Add new models here and they'll automatically appear in the API
+
+models:
+  gpt-4o-mini:
+    adapter: openai
+    model: gpt-4o-mini
+    description: Fast and affordable GPT-4 variant
+
+  gpt-4o:
+    adapter: openai
+    model: gpt-4o
+    description: Most capable OpenAI model
