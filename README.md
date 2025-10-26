@@ -4,8 +4,8 @@
 
 Build full-stack AI applications with any LLM provider. One interface, infinite possibilities.
 
-![FAIForge Demo](https://via.placeholder.com/800x400?text=FAIForge+Demo)
-*Add a screenshot later!*
+![FAIForge Demo](https://github.com/user-attachments/assets/4b0f8982-b96a-4dad-8928-ecf2d444dd50)
+
 
 ## ✨ Features
 
