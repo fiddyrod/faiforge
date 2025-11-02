@@ -21,3 +21,11 @@ models:
     adapter: anthropic
     model: claude-opus-4-20250514
     description: Most capable Claude model
+
+  # vLLM Local Models
+  tiny-llama:
+    adapter: vllm
+    model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    max_model_len: 2048
+    gpu_memory_utilization: 0.5  # Use only 50% of GPU (4GB out of 8GB)
+    description: Tiny local model (1.1B params, ~2.5GB)

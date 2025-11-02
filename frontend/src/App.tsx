@@ -102,6 +102,7 @@ function App() {
               <option value="gpt-4o">GPT-4o (Smart)</option>
               <option value="claude-sonnet">Claude Sonnet (Balanced)</option>
               <option value="claude-opus">Claude Opus (Best)</option>
+              <option value="tiny-llama">Tiny-llama</option>
             </select>
             {messages.length > 0 && (
               <button

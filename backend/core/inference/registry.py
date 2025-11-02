@@ -1,7 +1,7 @@
 import yaml
-from typing import Dict
+from typing import Dict, Optional
 from pathlib import Path
-from .adapters import LLMAdapter, OpenAIAdapter, AnthropicAdapter
+from .adapters import LLMAdapter, OpenAIAdapter, AnthropicAdapter, VLLMAdapter
 
 
 class ModelRegistry:
@@ -29,7 +29,8 @@ class ModelRegistry:
 def load_registry(
     config_path: str,
     openai_api_key: str,
-    anthropic_api_key: str = None
+    anthropic_api_key: Optional[str] = None,
+    load_vllm: bool = True
 ) -> ModelRegistry:
     """
     Load models from YAML configuration.
@@ -38,6 +39,7 @@ def load_registry(
         config_path: Path to models.yaml
         openai_api_key: OpenAI API key
         anthropic_api_key: Anthropic API key (optional)
+        load_vllm: Whether to load vLLM models (can be slow on startup)
     """
     config_file = Path(config_path)
     if not config_file.exists():
@@ -60,15 +62,30 @@ def load_registry(
         
         elif adapter_type == "anthropic":
             if not anthropic_api_key:
-                print(f"Warning: Skipping {model_name} - ANTHROPIC_API_KEY not set")
+                print(f"⚠️: Skipping {model_name} - ANTHROPIC_API_KEY not set")
                 continue
             adapter = AnthropicAdapter(
                 api_key=anthropic_api_key,
                 model=model_config["model"]
             )
             registry.register(model_name, adapter)
+
+        elif adapter_type == "vllm":
+            if not load_vllm:
+                print(f"⚠️  Skipping {model_name} - vLLM loading disabled")
+                continue
+            
+            print(f"🔄 Loading vLLM model: {model_name}...")
+            print(f"📋 Config: {model_config}")
+            
+            adapter = VLLMAdapter(
+                model=model_config["model"],
+                max_model_len=model_config.get("max_model_len", 2048),
+                gpu_memory_utilization=model_config.get("gpu_memory_utilization", 0.9)
+            )
+            registry.register(model_name, adapter)
         
         else:
-            print(f"Warning: Unknown adapter type '{adapter_type}' for model '{model_name}'")
+            print(f"⚠️: Unknown adapter type '{adapter_type}' for model '{model_name}'")
     
     return registry

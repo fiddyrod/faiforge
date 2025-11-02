@@ -8,13 +8,17 @@ from ..inference.registry import load_registry
 from ..inference.adapters import Message
 
 
-def create_app(openai_api_key: str, anthropic_api_key: str = None) -> FastAPI:
+def create_app(
+    openai_api_key: str,
+    anthropic_api_key: str = None,
+    load_vllm: bool = True
+) -> FastAPI:
     """Create and configure FastAPI application"""
     
     app = FastAPI(
         title="FAIForge API",
-        version="0.1.0",
-        description="Production-ready AI boilerplate - One interface, any LLM provider"
+        version="0.2.0",
+        description="Production-ready AI boilerplate - OpenAI, Anthropic, and local vLLM"
     )
     
     # CORS
@@ -26,12 +30,14 @@ def create_app(openai_api_key: str, anthropic_api_key: str = None) -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Load model registry with both API keys
+    # Load model registry
     registry = load_registry(
         "core/config/models.yaml",
         openai_api_key,
-        anthropic_api_key
+        anthropic_api_key,
+        load_vllm
     )
+    print(f"✅ Loaded {len(registry.list())} models: {', '.join(registry.list())}")
     
     # Request/Response models
     class ChatMessage(BaseModel):
