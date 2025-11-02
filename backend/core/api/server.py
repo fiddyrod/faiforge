@@ -8,7 +8,7 @@ from ..inference.registry import load_registry
 from ..inference.adapters import Message
 
 
-def create_app(openai_api_key: str) -> FastAPI:
+def create_app(openai_api_key: str, anthropic_api_key: str = None) -> FastAPI:
     """Create and configure FastAPI application"""
     
     app = FastAPI(
@@ -17,7 +17,7 @@ def create_app(openai_api_key: str) -> FastAPI:
         description="Production-ready AI boilerplate - One interface, any LLM provider"
     )
     
-    # CORS for frontend
+    # CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -26,8 +26,12 @@ def create_app(openai_api_key: str) -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Load model registry
-    registry = load_registry("core/config/models.yaml", openai_api_key)
+    # Load model registry with both API keys
+    registry = load_registry(
+        "core/config/models.yaml",
+        openai_api_key,
+        anthropic_api_key
+    )
     
     # Request/Response models
     class ChatMessage(BaseModel):

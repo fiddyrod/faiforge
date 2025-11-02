@@ -1,7 +1,7 @@
 import yaml
 from typing import Dict
 from pathlib import Path
-from .adapters import LLMAdapter, OpenAIAdapter
+from .adapters import LLMAdapter, OpenAIAdapter, AnthropicAdapter
 
 
 class ModelRegistry:
@@ -11,28 +11,11 @@ class ModelRegistry:
         self._models: Dict[str, LLMAdapter] = {}
     
     def register(self, name: str, adapter: LLMAdapter):
-        """
-        Register a model with the registry.
-        
-        Args:
-            name: Friendly name for the model (e.g., 'gpt-4o-mini')
-            adapter: Initialized adapter instance
-        """
+        """Register a model with the registry"""
         self._models[name] = adapter
     
     def get(self, name: str) -> LLMAdapter:
-        """
-        Get a model adapter by name.
-        
-        Args:
-            name: Model name
-            
-        Returns:
-            LLMAdapter instance
-            
-        Raises:
-            ValueError: If model not found
-        """
+        """Get a model adapter by name"""
         if name not in self._models:
             available = ", ".join(self._models.keys())
             raise ValueError(f"Model '{name}' not found. Available: {available}")
@@ -43,16 +26,18 @@ class ModelRegistry:
         return list(self._models.keys())
 
 
-def load_registry(config_path: str, openai_api_key: str) -> ModelRegistry:
+def load_registry(
+    config_path: str,
+    openai_api_key: str,
+    anthropic_api_key: str = None
+) -> ModelRegistry:
     """
     Load models from YAML configuration.
     
     Args:
         config_path: Path to models.yaml
         openai_api_key: OpenAI API key
-        
-    Returns:
-        Initialized ModelRegistry
+        anthropic_api_key: Anthropic API key (optional)
     """
     config_file = Path(config_path)
     if not config_file.exists():
@@ -72,6 +57,17 @@ def load_registry(config_path: str, openai_api_key: str) -> ModelRegistry:
                 model=model_config["model"]
             )
             registry.register(model_name, adapter)
+        
+        elif adapter_type == "anthropic":
+            if not anthropic_api_key:
+                print(f"Warning: Skipping {model_name} - ANTHROPIC_API_KEY not set")
+                continue
+            adapter = AnthropicAdapter(
+                api_key=anthropic_api_key,
+                model=model_config["model"]
+            )
+            registry.register(model_name, adapter)
+        
         else:
             print(f"Warning: Unknown adapter type '{adapter_type}' for model '{model_name}'")
     

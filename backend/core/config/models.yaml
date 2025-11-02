@@ -1,7 +1,6 @@
 # Model Configuration
-# Add new models here and they'll automatically appear in the API
-
 models:
+  # OpenAI Models
   gpt-4o-mini:
     adapter: openai
     model: gpt-4o-mini
@@ -11,3 +10,14 @@ models:
     adapter: openai
     model: gpt-4o
     description: Most capable OpenAI model
+
+  # Anthropic Models
+  claude-sonnet:
+    adapter: anthropic
+    model: claude-sonnet-4-5-20250929
+    description: Balanced performance and speed
+
+  claude-opus:
+    adapter: anthropic
+    model: claude-opus-4-20250514
+    description: Most capable Claude model
