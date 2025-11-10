@@ -1,0 +1,14 @@
+# Production Environment Overrides
+api:
+  reload: false
+  workers: 4  # Multiple workers for production
+
+cors:
+  origins:
+    - "https://faiforge.com"
+
+observability:
+  log_level: "INFO"
+
+models:
+  load_vllm: false  # Use cloud models only in production

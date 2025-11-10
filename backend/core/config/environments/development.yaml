@@ -1,0 +1,15 @@
+# Development Environment Overrides
+api:
+  reload: true
+  workers: 1
+
+cors:
+  origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+
+observability:
+  log_level: "DEBUG"
+
+models:
+  load_vllm: true

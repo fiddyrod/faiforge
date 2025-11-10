@@ -2,53 +2,56 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-import os
 
 from ..inference.registry import load_registry
 from ..inference.adapters import Message
+from ..config import AppConfig
 
 
 def create_app(
+    config: AppConfig,
     openai_api_key: str,
-    anthropic_api_key: str = None,
-    load_vllm: bool = True
+    anthropic_api_key: str = None
 ) -> FastAPI:
     """Create and configure FastAPI application"""
     
     app = FastAPI(
         title="FAIForge API",
-        version="0.2.0",
-        description="Production-ready AI boilerplate - OpenAI, Anthropic, and local vLLM"
+        version="0.3.0",  # Bumped version!
+        description="Production-ready AI boilerplate - Configuration-driven"
     )
     
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:5173"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS - now from config!
+    if config.cors.enabled:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.cors.origins,
+            allow_credentials=config.cors.allow_credentials,
+            allow_methods=config.cors.allow_methods,
+            allow_headers=config.cors.allow_headers,
+        )
+        print(f"✅ CORS enabled for origins: {config.cors.origins}")
     
-    # Load model registry
+    # Load model registry with config
+    print(f"🔄 Loading models from {config.models.config_path}...")
     registry = load_registry(
-        "core/config/models.yaml",
+        config.models.config_path,
         openai_api_key,
         anthropic_api_key,
-        load_vllm
+        load_vllm=config.models.load_vllm
     )
     print(f"✅ Loaded {len(registry.list())} models: {', '.join(registry.list())}")
     
-    # Request/Response models
+    # Request/Response models - defaults from config!
     class ChatMessage(BaseModel):
         role: str
         content: str
     
     class CompletionRequest(BaseModel):
         messages: List[ChatMessage]
-        model: str = "gpt-4o-mini"
-        temperature: float = 0.7
-        max_tokens: int = 500
+        model: str = config.defaults.model  # ← From config!
+        temperature: float = config.defaults.temperature  # ← From config!
+        max_tokens: int = config.defaults.max_tokens  # ← From config!
     
     class CompletionResponse(BaseModel):
         content: str

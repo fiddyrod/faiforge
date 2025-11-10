@@ -1,14 +1,18 @@
 import uvicorn
+from core.config import load_config
 
 if __name__ == "__main__":
+     # Load config
+    config = load_config()
+
     print("🔥 Starting FAIForge API...")
-    print("📝 API docs: http://localhost:8000/docs")
-    print("❤️  Health check: http://localhost:8000/health")
-    print("🔄 Auto-reload enabled (dev mode)")
+    print(f"📝 API docs: http://{config.api.host}:{config.api.port}/docs")
+    print(f"❤️  Health check: http://{config.api.host}:{config.api.port}/health")
+    print(f"🔄 Auto-reload: {config.api.reload}")
     
     uvicorn.run(
-        "main:app",  # ← Import string format
-        host="0.0.0.0",
-        port=8000,
-        reload=True  # ← Enable auto-reload on code changes
+        "main:app",
+        host=config.api.host,      
+        port=config.api.port,      
+        reload=config.api.reload   
     )
