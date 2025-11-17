@@ -2,6 +2,7 @@ import time
 from typing import List
 from anthropic import AsyncAnthropic
 from .base import LLMAdapter, Message, Response
+from ...observability import get_logger, log_with_context
 
 
 class AnthropicAdapter(LLMAdapter):
@@ -29,6 +30,7 @@ class AnthropicAdapter(LLMAdapter):
         """
         self.client = AsyncAnthropic(api_key=api_key)
         self.model = model
+        self.logger = get_logger()
         
         if model not in self.PRICING:
             # Allow model but warn if pricing unknown
@@ -41,7 +43,21 @@ class AnthropicAdapter(LLMAdapter):
         max_tokens: int = 500
     ) -> Response:
         """Generate completion using Anthropic API"""
+
         start_time = time.time()
+
+        # Log request start
+        log_with_context(
+            self.logger,
+            "info",
+            f"Starting Anthropic request",
+            event="llm_request_start",
+            provider="anthropic",
+            model=self.model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            message_count=len(messages)
+        )
         
         # Anthropic requires system messages separate
         system_message = None
@@ -67,29 +83,64 @@ class AnthropicAdapter(LLMAdapter):
         if system_message:
             kwargs["system"] = system_message
         
-        response = await self.client.messages.create(**kwargs)
-        
-        # Calculate latency
-        latency_ms = (time.time() - start_time) * 1000
-        
-        # Calculate cost
-        input_tokens = response.usage.input_tokens
-        output_tokens = response.usage.output_tokens
-        
-        if self.model in self.PRICING:
-            pricing = self.PRICING[self.model]
-            cost_usd = (
-                input_tokens * pricing["input"] +
-                output_tokens * pricing["output"]
+        try:
+            response = await self.client.messages.create(**kwargs)
+            
+            # Calculate latency
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Extract data
+            content = response.content[0].text
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+            total_tokens = input_tokens + output_tokens
+            
+            # Calculate cost
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+            
+            if self.model in self.PRICING:
+                pricing = self.PRICING[self.model]
+                cost_usd = (
+                    input_tokens * pricing["input"] +
+                    output_tokens * pricing["output"]
+                )
+            else:
+                cost_usd = 0.0  # Unknown pricing
+
+            # Log successful completion
+            log_with_context(
+                self.logger,
+                "info",
+                f"Anthropic request completed",
+                event="llm_request_complete",
+                provider="anthropic",
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=round(cost_usd, 6),
+                latency_ms=round(latency_ms, 2),
+                status="success"
             )
-        else:
-            cost_usd = 0.0  # Unknown pricing
-        
-        return Response(
-            content=response.content[0].text,
-            model=self.model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=round(cost_usd, 6),
-            latency_ms=round(latency_ms, 2)
-        )
+            
+            return Response(
+                content=response.content[0].text,
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=round(cost_usd, 6),
+                latency_ms=round(latency_ms, 2)
+            )
+        except Exception as e:
+            # Log error
+            log_with_context(
+                self.logger,
+                "error",
+                f"Anthropic request failed: {str(e)}",
+                event="llm_request_error",
+                provider="anthropic",
+                model=self.model,
+                error=str(e),
+            )
+            raise e

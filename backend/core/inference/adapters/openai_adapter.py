@@ -1,8 +1,9 @@
 import time
 from typing import List
 from openai import AsyncOpenAI
-from .base import LLMAdapter, Message, Response
 
+from .base import LLMAdapter, Message, Response
+from ...observability import get_logger, log_with_context
 
 class OpenAIAdapter(LLMAdapter):
     """Adapter for OpenAI API"""
@@ -29,10 +30,10 @@ class OpenAIAdapter(LLMAdapter):
         """
         self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
+        self.logger = get_logger()
         
         if model not in self.PRICING:
             raise ValueError(f"Unknown model: {model}. Available: {list(self.PRICING.keys())}")
-        
         
     
     async def complete(
@@ -42,38 +43,69 @@ class OpenAIAdapter(LLMAdapter):
         max_tokens: int = 500
     ) -> Response:
         """Generate completion using OpenAI API"""
+
         start_time = time.time()
-        
-        # Convert messages to OpenAI format
-        openai_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ]
-        
-        # Call OpenAI API
-        response = await self.client.chat.completions.create(
+
+        # Log request start
+        log_with_context(
+            self.logger,
+            "info",
+            f"Starting OpenAI request",
+            event="llm_request_start",
+            provider="openai",
             model=self.model,
-            messages=openai_messages,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            message_count=len(messages)
         )
         
-        # Calculate latency
-        latency_ms = (time.time() - start_time) * 1000
-        
-        # Calculate cost
-        usage = response.usage
-        pricing = self.PRICING[self.model]
-        cost_usd = (
-            usage.prompt_tokens * pricing["input"] +
-            usage.completion_tokens * pricing["output"]
-        )
-        
-        return Response(
-            content=response.choices[0].message.content,
-            model=self.model,
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
-            cost_usd=round(cost_usd, 6),
-            latency_ms=round(latency_ms, 2)
-        )
+        try:
+            # Convert messages to OpenAI format
+            openai_messages = [
+                {"role": msg.role, "content": msg.content}
+                for msg in messages
+            ]
+            
+            # Call OpenAI API
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=openai_messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # Calculate latency
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Calculate cost
+            usage = response.usage
+            pricing = self.PRICING[self.model]
+            cost_usd = (
+                usage.prompt_tokens * pricing["input"] +
+                usage.completion_tokens * pricing["output"]
+            )
+
+            return Response(
+                content=response.choices[0].message.content,
+                model=self.model,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                cost_usd=round(cost_usd, 6),
+                latency_ms=round(latency_ms, 2)
+            )
+        except Exception as e:
+            # Log error
+            log_with_context(
+                self.logger,
+                "error",
+                f"OpenAI request failed: {str(e)}",
+                event="llm_request_error",
+                provider="openai",
+                model=self.model,
+                error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(latency_ms, 2),
+                status="error"
+            )
+            
+            raise e

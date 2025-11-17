@@ -1,7 +1,9 @@
 import time
-from typing import List, Optional
+from typing import List
 from vllm import LLM, SamplingParams
+
 from .base import LLMAdapter, Message, Response
+from ...observability import get_logger, log_with_context
 
 
 class VLLMAdapter(LLMAdapter):
@@ -11,35 +13,30 @@ class VLLMAdapter(LLMAdapter):
         self,
         model: str,
         max_model_len: int = 2048,
-        gpu_memory_utilization: float = 0.9
+        gpu_memory_utilization: float = 0.5
     ):
-        """
-        Initialize vLLM adapter.
-        
-        Args:
-            model: HuggingFace model name
-            max_model_len: Maximum context length
-            gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0)
-        """
-        print(f"Loading vLLM model: {model}...")
+        """Initialize vLLM adapter"""
+        print(f"🔄 Loading vLLM model: {model}...")
+        print(f"📊 GPU memory utilization: {gpu_memory_utilization * 100}%")
         print("This may take a few minutes on first run (downloading weights)...")
         
-        self.model_name = model
-        self.llm = LLM(
-            model=model,
-            max_model_len=max_model_len,
-            gpu_memory_utilization=gpu_memory_utilization,
-            trust_remote_code=True  # Required for some models
-        )
+        self.model = model  # ← Changed from self.model_name
+        self.logger = get_logger()
         
-        print(f"✅ Model {model} loaded successfully!")
+        try:
+            self.llm = LLM(
+                model=model,
+                max_model_len=max_model_len,
+                gpu_memory_utilization=gpu_memory_utilization,
+                trust_remote_code=True
+            )
+            print(f"✅ Model {model} loaded successfully!")
+        except Exception as e:
+            print(f"❌ Failed to load {model}: {e}")
+            raise
     
     def _format_messages(self, messages: List[Message]) -> str:
-        """
-        Convert messages to a prompt string.
-        Different models have different chat formats.
-        This is a simple version - you'd customize per model.
-        """
+        """Convert messages to a prompt string"""
         prompt = ""
         for msg in messages:
             if msg.role == "system":
@@ -59,34 +56,87 @@ class VLLMAdapter(LLMAdapter):
         max_tokens: int = 500
     ) -> Response:
         """Generate completion using vLLM"""
+        
         start_time = time.time()
         
-        # Format messages into prompt
-        prompt = self._format_messages(messages)
-        
-        # Configure sampling
-        sampling_params = SamplingParams(
+        # Log request start
+        log_with_context(
+            self.logger,
+            "info",
+            f"Starting vLLM request",
+            event="llm_request_start",
+            provider="vllm",
+            model=self.model,
             temperature=temperature,
             max_tokens=max_tokens,
-            top_p=0.95
+            message_count=len(messages)
         )
         
-        # Generate (vLLM is synchronous, but we're in async function)
-        outputs = self.llm.generate([prompt], sampling_params)
-        output = outputs[0].outputs[0]
+        try:
+            # Format messages into prompt
+            prompt = self._format_messages(messages)
+            
+            # Configure sampling
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=0.95
+            )
+            
+            # Generate
+            outputs = self.llm.generate([prompt], sampling_params)
+            output = outputs[0].outputs[0]
+            
+            # Calculate metrics
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Estimate token counts
+            input_tokens = len(outputs[0].prompt_token_ids)
+            output_tokens = len(output.token_ids)
+            total_tokens = input_tokens + output_tokens
+            
+            # Log successful completion
+            log_with_context(
+                self.logger,
+                "info",
+                f"vLLM request completed",
+                event="llm_request_complete",
+                provider="vllm",
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=0.0,
+                latency_ms=round(latency_ms, 2),
+                status="success"
+            )
+            
+            return Response(
+                content=output.text,
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=0.0,
+                latency_ms=round(latency_ms, 2)
+            )
         
-        # Calculate latency
-        latency_ms = (time.time() - start_time) * 1000
-        
-        # Estimate token counts (vLLM provides token IDs)
-        input_tokens = len(outputs[0].prompt_token_ids)
-        output_tokens = len(output.token_ids)
-        
-        return Response(
-            content=output.text,
-            model=self.model_name,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=0.0,  # Local models are free!
-            latency_ms=round(latency_ms, 2)
-        )
+        except Exception as e:
+            # Calculate latency even on error
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Log error
+            log_with_context(
+                self.logger,
+                "error",
+                f"vLLM request failed: {str(e)}",
+                event="llm_request_error",
+                provider="vllm",
+                model=self.model,
+                error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(latency_ms, 2),
+                status="error"
+            )
+            
+            # Re-raise
+            raise
