@@ -1,8 +1,54 @@
+# Python
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+build/
+*.egg
+
+# Environment
 .env
-.DS_Store
+.env.local
+.env.*.local
+
+# Node / Frontend
 node_modules/
 dist/
+.vite/
+*.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 *:Zone.Identifier
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+.dockerignore
+
+# Internal documentation (not for public repo)
+docs/notes/
+PROJECT_READY_SUMMARY.md
+README.backup.md
+.archive/

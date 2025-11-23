@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 from typing import List
 import traceback
 
@@ -21,7 +21,7 @@ def create_app(
     
     app = FastAPI(
         title="FAIForge API",
-        version="0.4.0",
+        version="1.0.0",
         description="Production-ready AI boilerplate with observability"
     )
     
@@ -70,41 +70,42 @@ def create_app(
             content={"detail": exc.detail}
         )
     
-    # CORS middleware - Allow all origins for Docker
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins
-        allow_credentials=False,  # Must be False with wildcard
-        allow_methods=["*"],  # Allow all methods
-        allow_headers=["*"],  # Allow all headers
-    )
-    logger.info("CORS enabled for all origins")
+    # CORS middleware - Use config-based origins for security
+    if config.cors.enabled:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.cors.origins,
+            allow_credentials=config.cors.allow_credentials,
+            allow_methods=config.cors.allow_methods,
+            allow_headers=config.cors.allow_headers,
+        )
+        logger.info(f"CORS enabled for origins: {config.cors.origins}")
     
     # Request logging middleware 
     app.add_middleware(RequestLoggingMiddleware)
     logger.info("Request logging middleware enabled")
 
-    
+
     # Load model registry with config
-    print(f"🔄 Loading models from {config.models.config_path}...")
+    logger.info(f"Loading models from {config.models.config_path}")
     registry = load_registry(
         config.models.config_path,
         openai_api_key,
         anthropic_api_key,
         load_vllm=config.models.load_vllm
     )
-    print(f"✅ Loaded {len(registry.list())} models: {', '.join(registry.list())}")
+    logger.info(f"Loaded {len(registry.list())} models: {', '.join(registry.list())}")
     
-    # Request/Response models - defaults from config!
+    # Request/Response models - defaults from config with validation!
     class ChatMessage(BaseModel):
-        role: str
-        content: str
-    
+        role: str = Field(..., pattern="^(user|assistant|system)$", description="Message role: user, assistant, or system")
+        content: str = Field(..., min_length=1, max_length=32000, description="Message content")
+
     class CompletionRequest(BaseModel):
-        messages: List[ChatMessage]
-        model: str = config.defaults.model  
-        temperature: float = config.defaults.temperature  
-        max_tokens: int = config.defaults.max_tokens  
+        messages: List[ChatMessage] = Field(..., min_items=1, max_items=50, description="Conversation messages")
+        model: str = config.defaults.model
+        temperature: float = Field(config.defaults.temperature, ge=0.0, le=2.0, description="Sampling temperature (0-2)")
+        max_tokens: int = Field(config.defaults.max_tokens, ge=1, le=4000, description="Maximum tokens to generate")  
     
     class CompletionResponse(BaseModel):
         content: str
@@ -122,7 +123,7 @@ def create_app(
             "info",
             "FAIForge API started",
             event="app_startup",
-            version="0.4.0",
+            version="1.0.0",
             models_loaded=len(registry.list()),
             models=registry.list()
         )
@@ -143,8 +144,8 @@ def create_app(
     async def root():
         """Root endpoint"""
         return {
-            "name": "GenAI Boilerplate",
-            "version": "0.1.0",
+            "name": "FAIForge API",
+            "version": "1.0.0",
             "status": "ok"
         }
     

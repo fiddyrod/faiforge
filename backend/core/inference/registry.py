@@ -1,15 +1,18 @@
 import yaml
 from typing import Dict, Optional
 from pathlib import Path
+import logging
 
 # Import adapters (VLLMAdapter may be None if vllm not installed)
 from .adapters import (
-    LLMAdapter, 
-    OpenAIAdapter, 
-    AnthropicAdapter, 
+    LLMAdapter,
+    OpenAIAdapter,
+    AnthropicAdapter,
     VLLMAdapter,
     VLLM_AVAILABLE
 )
+
+logger = logging.getLogger(__name__)
 
 class ModelRegistry:
     """Registry for managing available models"""
@@ -69,7 +72,7 @@ def load_registry(
         
         elif adapter_type == "anthropic":
             if not anthropic_api_key:
-                print(f"⚠️: Skipping {model_name} - ANTHROPIC_API_KEY not set")
+                logger.warning(f"Skipping {model_name} - ANTHROPIC_API_KEY not set")
                 continue
             adapter = AnthropicAdapter(
                 api_key=anthropic_api_key,
@@ -80,25 +83,25 @@ def load_registry(
         elif adapter_type == "vllm":
             # Check if vLLM is installed
             if not VLLM_AVAILABLE:
-                print(f"⚠️  Skipping {model_name} - vLLM not installed")
+                logger.warning(f"Skipping {model_name} - vLLM not installed")
                 continue
-            
+
             # Check if vLLM loading is enabled
             if not load_vllm:
-                print(f"⚠️  Skipping {model_name} - vLLM loading disabled")
+                logger.info(f"Skipping {model_name} - vLLM loading disabled")
                 continue
-            
-            print(f"🔄 Loading vLLM model: {model_name}...")
-            print(f"📋 Config: {model_config}")
-            
+
+            logger.info(f"Loading vLLM model: {model_name}")
+            logger.debug(f"vLLM config: {model_config}")
+
             adapter = VLLMAdapter(
                 model=model_config["model"],
                 max_model_len=model_config.get("max_model_len", 2048),
                 gpu_memory_utilization=model_config.get("gpu_memory_utilization", 0.9)
             )
             registry.register(model_name, adapter)
-        
+
         else:
-            print(f"⚠️: Unknown adapter type '{adapter_type}' for model '{model_name}'")
+            logger.warning(f"Unknown adapter type '{adapter_type}' for model '{model_name}'")
     
     return registry

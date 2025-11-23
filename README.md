@@ -1,12 +1,27 @@
 # 🤖 FAIForge
 
-> Production-ready AI boilerplate with multi-provider support and built-in observability
+> A clean foundation for exploring LLM providers with a unified adapter pattern
 
 ![Status](https://img.shields.io/badge/status-production--ready-green)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Stop reinventing the wheel.** FAIForge is a production-ready foundation for building AI applications with multiple LLM providers, complete observability, and Docker deployment.
+**Switch between OpenAI, Anthropic, and local models with one line of config.** FAIForge provides a simple adapter pattern for multi-provider LLM development with built-in observability and Docker deployment.
+
+---
+
+## 💡 Why FAIForge?
+
+I built this while exploring different LLM providers and found myself repeatedly solving the same infrastructure problems:
+
+- **Provider switching** - Rewriting code every time I wanted to test a different model
+- **Cost tracking** - No visibility into per-request costs across providers
+- **Observability** - Difficulty debugging AI interactions without proper logging
+- **Deployment** - Setting up Docker, security headers, CORS each time
+
+The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a config change, and all the observability/deployment infrastructure comes for free.
+
+**Quick Links:** [Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#️-architecture) • [Extending](#-extending-faiforge) • [API Docs](#-api-reference) • [Deployment](#-deployment)
 
 ---
 
@@ -54,12 +69,12 @@
 
 ### 1. Clone & Setup
 ```bash
-git clone https://github.com/yourusername/faiforge.git
+git clone https://github.com/fiddyrod/faiforge.git
 cd faiforge
 
 # Add your API keys
 cp backend/.env.example backend/.env
-nano backend/.env  # Add your keys
+nano backend/.env  # Add your OPENAI_API_KEY and ANTHROPIC_API_KEY
 ```
 
 ### 2. Start Everything
@@ -317,6 +332,48 @@ docker-compose down
 
 ---
 
+## 🔌 Extending FAIForge - The Adapter Pattern
+
+### Why Adapters Matter
+
+The **adapter pattern** is the core of FAIForge. It's what makes provider switching painless and keeps your code clean as you add more models.
+
+Each LLM provider has a different API format. Without adapters, you'd have provider-specific logic scattered everywhere. With adapters, you write it once and all providers work the same way.
+
+### Adding New Providers
+
+**Time to add:** ~30 minutes
+
+**What you'll do:**
+1. Create adapter class inheriting from `BaseAdapter`
+2. Implement `complete()` and `complete_stream()` methods
+3. Transform requests/responses to match the provider's API
+4. Register in `registry.py` and configure in `models.yaml`
+
+**Currently supported:**
+- OpenAI (GPT-4o, GPT-4o-mini)
+- Anthropic (Claude Opus 4, Sonnet 4.5)
+- vLLM (local models - TinyLlama, any HuggingFace model)
+
+**Easy to add:**
+- Cohere (Command R, Command R+)
+- Google Gemini (Pro, Ultra)
+- Mistral AI (Mistral Large, Mixtral)
+- Any OpenAI-compatible API
+
+**Complete tutorial:** See [docs/ADDING_ADAPTERS.md](docs/ADDING_ADAPTERS.md) for step-by-step guide with working Cohere example.
+
+### What Adapters Give You
+
+- **Isolation** - Provider changes don't affect other code
+- **Consistency** - All providers return the same response format
+- **Testability** - Easy to mock and test each provider
+- **Observability** - Unified logging and cost tracking across all providers
+
+Once you understand this pattern, adding providers becomes routine.
+
+---
+
 ## 💻 Development
 
 ### Local Development (Without Docker)
@@ -460,11 +517,11 @@ A: Only if you want to run local models via vLLM. Cloud providers (OpenAI, Anthr
 **Q: How much does it cost to run?**  
 A: Docker hosting is cheap (~$5-20/month). LLM costs depend on usage - OpenAI/Anthropic charge per token. Monitor in their dashboards.
 
-**Q: Can I add more LLM providers?**  
-A: Absolutely! Follow the adapter pattern in `core/inference/adapters/`. See existing adapters as examples.
+**Q: Can I add more LLM providers?**
+A: Yes! The adapter pattern makes this straightforward. Adding a new provider (Cohere, Gemini, Mistral, etc.) takes ~30 minutes. See [docs/ADDING_ADAPTERS.md](docs/ADDING_ADAPTERS.md) for a complete tutorial with working examples.
 
-**Q: Is this better than LangChain?**  
-A: Different purpose. LangChain is for complex chains and agents. FAIForge is a clean, production-ready foundation to build on.
+**Q: Is this better than LangChain?**
+A: Different goals. LangChain excels at complex chains and agents. FAIForge focuses on production infrastructure, observability, and multi-provider management. They can complement each other - use FAIForge as your API layer with LangChain for orchestration if needed.
 
 **Q: How do I update to new model versions?**  
 A: Update `backend/core/config/models.yaml` with new model IDs. No code changes needed.
@@ -473,63 +530,43 @@ A: Update `backend/core/config/models.yaml` with new model IDs. No code changes 
 
 ## 🛣️ Roadmap
 
-### v1.1 (Next 2-4 Weeks)
+The following features are planned for future releases:
+
+### Planned Features
+
+**Authentication & Persistence:**
 - [ ] Conversation persistence (SQLite/PostgreSQL)
 - [ ] User authentication & sessions
-- [ ] Rate limiting
+- [ ] Rate limiting implementation
 - [ ] Caching layer (Redis)
 
-### v1.2 (1-2 Months)
+**Advanced AI Capabilities:**
 - [ ] RAG module (document Q&A)
 - [ ] Vector database integration (Pinecone/Weaviate)
 - [ ] Streaming responses
 - [ ] Conversation search
 
-### v1.3 (2-3 Months)
+**Enterprise Features:**
 - [ ] Agent framework
 - [ ] Tool calling & function execution
 - [ ] Multi-agent orchestration
+- [ ] Multi-modal support (vision, audio)
+
+**Developer Experience:**
+- [ ] Admin dashboard
+- [ ] Model evaluation suite
+- [ ] Fine-tuning pipeline
 - [ ] Advanced UI components
 
-### v2.0 (Future)
-- [ ] Multi-modal support (vision, audio)
-- [ ] Fine-tuning pipeline
-- [ ] Model evaluation suite
-- [ ] Admin dashboard
-
 ---
 
-## 🤝 Contributing
-
-Contributions welcome! This project is both a learning resource and production foundation.
-
-**How to contribute:**
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-**Areas needing help:**
-- Additional LLM providers (Gemini, Cohere, Mistral, Llama)
-- UI/UX improvements
-- Documentation enhancements
-- Test coverage
-- Deployment guides for specific platforms
-- Performance optimizations
-
-**Code Style:**
-- Backend: Follow PEP 8, use type hints
-- Frontend: TypeScript strict mode, ESLint
-- Commits: Conventional Commits format
-
----
-
-## 📝 License
+## 📝 License & Usage
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-You're free to use this for personal or commercial projects. Attribution appreciated but not required!
+This project is open-source and available for use in personal or commercial projects. While the code is available for reference and learning, this is currently a personal project not actively seeking external contributions.
+
+Feel free to fork and adapt for your own needs!
 
 ---
 
@@ -549,13 +586,36 @@ Special thanks to the open-source community for these incredible tools!
 
 ---
 
+## 🎓 Design Principles
+
+This project prioritizes:
+
+**Production-Ready Over Feature-Rich**
+- Security, observability, and error handling come first
+- Clean architecture patterns that scale
+- Comprehensive input validation and timeout handling
+
+**Simplicity Over Complexity**
+- No unnecessary abstractions
+- Clear separation of concerns
+- Easy to understand and modify
+
+**Developer Experience**
+- One-command deployment
+- Clear documentation
+- Extensible adapter pattern for adding providers
+
+Simple, focused, and practical.
+
+---
+
 ## 👨‍💻 About
 
-Built by a developer learning modern AI development. This project represents ~60 hours of focused weekend work, implementing production patterns learned from experience and research.
+I built FAIForge as a personal project for exploring different LLM providers and testing prompt strategies across models. The adapter pattern made it easy to swap providers, and the observability features helped me understand costs and performance.
 
-Started as a learning exercise to transition from PHP to full-stack Python/React development. Along the way, I discovered best practices for observability, configuration management, and Docker deployment.
+**Use it as a foundation**: If you're building AI applications and want to avoid reinventing provider management, cost tracking, and deployment infrastructure, feel free to fork this and build on top of it.
 
-**If you're building AI products or learning AI development, I hope this saves you time!**
+It's saved me considerable time - hopefully it helps you too!
 
 ---
 
@@ -567,16 +627,14 @@ Started as a learning exercise to transition from PHP to full-stack Python/React
 
 **Local Models:** vLLM requires NVIDIA GPU with CUDA support. CPU inference is extremely slow and not recommended.
 
-**Security:** This is designed for development/internal use. For public deployments, add authentication, rate limiting, and input validation.
+**Security:** Input validation, timeouts, and security headers are included. For public deployments, add authentication and rate limiting (configurations provided). Review [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) before production deployment.
 
 ---
 
 ## 📧 Contact & Support
 
-- **Issues:** [GitHub Issues](https://github.com/yourusername/faiforge/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourusername/faiforge/discussions)
-- **Twitter:** [@yourhandle](https://twitter.com/yourhandle) (optional)
-- **Email:** your.email@example.com (optional)
+- **Issues:** Open an issue in your repository's Issues tab
+- **Discussions:** Use GitHub Discussions for questions and ideas
 
 Found a bug? Have a feature request? Open an issue!
 

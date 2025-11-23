@@ -1,28 +1,26 @@
 # 🤝 Contributing to FAIForge
 
-First off, thank you for considering contributing to FAIForge! It's people like you that make FAIForge a great tool for the AI developer community.
+**Note:** This project is currently a personal/professional project and not actively seeking external contributions. This document is maintained as a reference for code standards and development guidelines.
+
+If you're interested in using FAIForge, feel free to fork the repository and adapt it for your own needs under the MIT License.
 
 ---
 
-## 🎯 Ways to Contribute
+## 📖 Purpose of This Document
 
-There are many ways to contribute:
-
-- 🐛 **Report bugs** - Found something broken? Let us know!
-- 💡 **Suggest features** - Have an idea? Share it!
-- 🔌 **Add adapters** - Support for new LLM providers
-- 📝 **Improve docs** - Fix typos, add examples, clarify explanations
-- 🧪 **Write tests** - Help us maintain quality
-- 🎨 **UI/UX improvements** - Make FAIForge more beautiful
-- 💬 **Answer questions** - Help others in discussions
+This guide documents the development standards, patterns, and best practices used in FAIForge. It serves as:
+- Reference documentation for the codebase architecture
+- Guide for maintaining consistency when forking
+- Educational resource for understanding the project's design decisions
 
 ---
 
-## 🚀 Quick Start for Contributors
+## 🚀 Development Setup
 
-### **1. Fork and Clone**
+If you're forking this project, here's how to set up your development environment:
+
+### **1. Clone Your Fork**
 ```bash
-# Fork the repo on GitHub, then:
 git clone https://github.com/YOUR_USERNAME/faiforge.git
 cd faiforge
 ```
@@ -41,30 +39,12 @@ cp .env.example .env
 # Add your API keys
 ```
 
-### **3. Create a Branch**
+### **3. Run Tests**
 ```bash
-git checkout -b feature/your-feature-name
-# Or: fix/bug-description
-# Or: docs/what-youre-documenting
+pytest tests/
+pytest -v                # Verbose output
+pytest --cov            # With coverage
 ```
-
-### **4. Make Your Changes**
-- Write code
-- Add tests
-- Update docs
-- Test locally
-
-### **5. Commit and Push**
-```bash
-git add .
-git commit -m "feat: add support for X"
-git push origin feature/your-feature-name
-```
-
-### **6. Open a Pull Request**
-- Go to GitHub and open a PR
-- Fill out the PR template
-- Wait for review
 
 ---
 
@@ -183,78 +163,10 @@ feat: add Cohere adapter with streaming support
 
 ---
 
-## 🐛 Reporting Bugs
-
-**Before reporting:**
-1. Check existing issues
-2. Try with latest version
-3. Test with minimal example
-
-**What to include:**
-```markdown
-## Bug Description
-Clear description of what's wrong
-
-## To Reproduce
-Steps to reproduce:
-1. Configure X
-2. Run Y
-3. See error
-
-## Expected Behavior
-What you expected to happen
-
-## Actual Behavior
-What actually happened
-
-## Environment
-- FAIForge version: v1.0.0
-- Python version: 3.11
-- OS: Ubuntu 22.04
-- Provider: OpenAI
-
-## Error Logs
-```python
-# Paste full error traceback
-```
-
-## Additional Context
-Any other relevant information
-```
-
----
-
-## 💡 Suggesting Features
-
-We love new ideas! Before suggesting:
-
-1. **Check existing issues** - Someone might have suggested it
-2. **Consider scope** - Does it fit FAIForge's purpose?
-3. **Think about implementation** - How would it work?
-
-**Use this template:**
-```markdown
-## Feature Description
-What feature do you want?
-
-## Use Case
-Who would use this and why?
-
-## Proposed Solution
-How could this be implemented?
-
-## Alternatives Considered
-What other approaches did you think about?
-
-## Additional Context
-Screenshots, examples, etc.
-```
-
----
 
 ## 🏗️ Architecture Principles
 
-When contributing, keep these principles in mind:
+The codebase follows these principles:
 
 ### **1. Adapter Pattern First**
 New providers should use the adapter pattern. Don't modify the core router.
@@ -328,91 +240,35 @@ Added code              # ❌ What code?
 
 ---
 
-## 🔍 Code Review Process
-
-1. **Automated checks** run on your PR (tests, linting)
-2. **Maintainer review** - We'll review your code
-3. **Feedback** - We might request changes
-4. **Approval** - Once approved, we'll merge!
-
-**What we look for:**
-- ✅ Does it work?
-- ✅ Are there tests?
-- ✅ Is it documented?
-- ✅ Does it follow our patterns?
-- ✅ Is the code clear?
-
-**Response time:**
-- We aim to respond within 48 hours
-- Complex PRs might take longer
-
 ---
 
-## 🎯 Good First Issues
+## ✅ Code Quality Standards
 
-New to the project? Look for issues labeled:
-- `good first issue` - Easy to tackle
-- `help wanted` - We need help on these
-- `documentation` - Improve docs
+When working with the codebase, maintain these standards:
 
----
-
-## 💬 Communication
-
-### **GitHub Issues**
-For bugs, features, and technical questions.
-
-### **GitHub Discussions**
-For:
-- General questions
-- Ideas and brainstorming
-- Show and tell
-- Community chat
-
-### **Pull Requests**
-For:
-- Code contributions
-- Documentation updates
-
----
-
-## 🚫 What NOT to Contribute
-
-To keep FAIForge focused, please avoid:
-
-- ❌ **Unrelated features** - Stay within scope
-- ❌ **Dependencies without reason** - Keep it lightweight
-- ❌ **Breaking changes** - Without discussion first
-- ❌ **Duplicates** - Check existing PRs/issues
-- ❌ **Code without tests** - Tests are required
+- ✅ **Functionality** - Code works as intended
+- ✅ **Tests** - All new code has tests
+- ✅ **Documentation** - Public APIs are documented
+- ✅ **Patterns** - Follows established architecture
+- ✅ **Clarity** - Code is readable and maintainable
 
 ---
 
 ## 📜 License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Any modifications you make to your fork will be under the MIT License.
 
 ---
 
-## 🙏 Recognition
+## ❓ Questions About the Code?
 
-Contributors are recognized in:
-- GitHub contributors page
-- Release notes
-- Special thanks in README
+This project is well-documented:
 
----
-
-## ❓ Questions?
-
-Not sure about something? Ask!
-
-- 💬 **Discussions:** For general questions
-- 📧 **Issues:** For specific problems
-- 📖 **Docs:** Check existing documentation
+- 📖 **[README.md](README.md)** - Main project documentation
+- 🏗️ **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design
+- 🔌 **[ADDING_ADAPTERS.md](docs/ADDING_ADAPTERS.md)** - Adapter tutorial
+- 🔒 **[SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md)** - Production deployment
 
 ---
 
-**Thank you for contributing to FAIForge!** 🚀
-
-Every contribution, no matter how small, makes FAIForge better for everyone. We appreciate your time and effort!
+**FAIForge - A clean foundation for multi-provider LLM development** 🚀

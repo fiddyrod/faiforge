@@ -20,21 +20,22 @@ class AnthropicAdapter(LLMAdapter):
         },
     }
     
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, timeout: float = 60.0):
         """
         Initialize Anthropic adapter.
-        
+
         Args:
             api_key: Anthropic API key
             model: Model name (e.g., 'claude-sonnet-4.5-20250929')
+            timeout: Request timeout in seconds (default: 60)
         """
-        self.client = AsyncAnthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key, timeout=timeout)
         self.model = model
         self.logger = get_logger()
-        
+
         if model not in self.PRICING:
             # Allow model but warn if pricing unknown
-            print(f"Warning: Unknown model '{model}', cost calculation may be inaccurate")
+            self.logger.warning(f"Unknown model '{model}', cost calculation may be inaccurate")
     
     async def complete(
         self,

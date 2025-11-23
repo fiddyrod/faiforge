@@ -1,8 +1,11 @@
 import os
 import yaml
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -115,27 +118,27 @@ def load_config(
     # Determine environment
     if environment is None:
         environment = os.getenv("ENV", "development")
-    
-    print(f"🔧 Loading configuration for environment: {environment}")
-    
+
+    logger.info(f"Loading configuration for environment: {environment}")
+
     # Load base config
     base_config = load_yaml(base_config_path)
-    
+
     # Load environment-specific overrides
     env_config_path = f"core/config/environments/{environment}.yaml"
     if Path(env_config_path).exists():
         env_config = load_yaml(env_config_path)
-        print(f"   📄 Env config API port: {env_config.get('api', {}).get('port', 'NOT SET')}")  # ← ADD THIS
+        logger.debug(f"Env config API port: {env_config.get('api', {}).get('port', 'NOT SET')}")
         config_dict = merge_configs(base_config, env_config)
-        print(f"   📄 After merge API port: {config_dict.get('api', {}).get('port', 'NOT SET')}")  # ← ADD THIS
-        print(f"   ✅ Loaded environment overrides from {env_config_path}")
+        logger.debug(f"After merge API port: {config_dict.get('api', {}).get('port', 'NOT SET')}")
+        logger.info(f"Loaded environment overrides from {env_config_path}")
     else:
         config_dict = base_config
-        print(f"   ⚠️  No environment config found at {env_config_path}, using base config")
-    
+        logger.warning(f"No environment config found at {env_config_path}, using base config")
+
     # Apply environment variable overrides
     config_dict = apply_env_overrides(config_dict)
-    print(f"   📄 After env vars API port: {config_dict.get('api', {}).get('port', 'NOT SET')}")  # ← ADD THIS
+    logger.debug(f"After env vars API port: {config_dict.get('api', {}).get('port', 'NOT SET')}")
 
     # Build config objects
     return AppConfig(
@@ -158,21 +161,21 @@ def apply_env_overrides(config: dict) -> dict:
     """
     overrides = {}
     prefix = "FAIFORGE_"
-    
-    print(f"   🔍 Scanning for {prefix}* environment variables...")
-    
+
+    logger.debug(f"Scanning for {prefix}* environment variables")
+
     for key, value in os.environ.items():
         if key.startswith(prefix):
-            print(f"      Found: {key} = {value}")  # ← ADD THIS
-            
+            logger.debug(f"Found env var: {key} = {value}")
+
             # Remove prefix and split into section and key
             parts = key[len(prefix):].lower().split("_", 1)
             if len(parts) == 2:
                 section, config_key = parts
-                
+
                 if section not in overrides:
                     overrides[section] = {}
-                
+
                 # Convert value to appropriate type
                 if value.lower() == "true":
                     value = True
@@ -180,12 +183,12 @@ def apply_env_overrides(config: dict) -> dict:
                     value = False
                 elif value.isdigit():
                     value = int(value)
-                
+
                 overrides[section][config_key] = value
-                print(f"   🔄 Override: {section}.{config_key} = {value}")
-    
+                logger.info(f"Config override: {section}.{config_key} = {value}")
+
     if not overrides:
-        print(f"      No {prefix}* variables found")  # ← ADD THIS
+        logger.debug(f"No {prefix}* variables found")
     
     # Merge overrides into config
     for section, values in overrides.items():

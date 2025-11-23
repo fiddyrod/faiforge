@@ -20,18 +20,19 @@ class OpenAIAdapter(LLMAdapter):
         },
     }
     
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, timeout: float = 60.0):
         """
         Initialize OpenAI adapter.
-        
+
         Args:
             api_key: OpenAI API key
             model: Model name (e.g., 'gpt-4o-mini')
+            timeout: Request timeout in seconds (default: 60)
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(api_key=api_key, timeout=timeout)
         self.model = model
         self.logger = get_logger()
-        
+
         if model not in self.PRICING:
             raise ValueError(f"Unknown model: {model}. Available: {list(self.PRICING.keys())}")
         
@@ -83,6 +84,22 @@ class OpenAIAdapter(LLMAdapter):
             cost_usd = (
                 usage.prompt_tokens * pricing["input"] +
                 usage.completion_tokens * pricing["output"]
+            )
+
+            # Log successful completion
+            log_with_context(
+                self.logger,
+                "info",
+                "OpenAI request completed successfully",
+                event="llm_request_complete",
+                provider="openai",
+                model=self.model,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.prompt_tokens + usage.completion_tokens,
+                cost_usd=round(cost_usd, 6),
+                latency_ms=round(latency_ms, 2),
+                status="success"
             )
 
             return Response(

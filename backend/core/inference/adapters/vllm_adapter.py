@@ -16,13 +16,13 @@ class VLLMAdapter(LLMAdapter):
         gpu_memory_utilization: float = 0.5
     ):
         """Initialize vLLM adapter"""
-        print(f"🔄 Loading vLLM model: {model}...")
-        print(f"📊 GPU memory utilization: {gpu_memory_utilization * 100}%")
-        print("This may take a few minutes on first run (downloading weights)...")
-        
-        self.model = model  # ← Changed from self.model_name
+        self.model = model
         self.logger = get_logger()
-        
+
+        self.logger.info(f"Loading vLLM model: {model}")
+        self.logger.info(f"GPU memory utilization: {gpu_memory_utilization * 100}%")
+        self.logger.info("This may take a few minutes on first run (downloading weights)")
+
         try:
             self.llm = LLM(
                 model=model,
@@ -30,9 +30,9 @@ class VLLMAdapter(LLMAdapter):
                 gpu_memory_utilization=gpu_memory_utilization,
                 trust_remote_code=True
             )
-            print(f"✅ Model {model} loaded successfully!")
+            self.logger.info(f"Model {model} loaded successfully")
         except Exception as e:
-            print(f"❌ Failed to load {model}: {e}")
+            self.logger.error(f"Failed to load {model}: {e}")
             raise
     
     def _format_messages(self, messages: List[Message]) -> str:
