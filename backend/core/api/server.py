@@ -70,18 +70,15 @@ def create_app(
             content={"detail": exc.detail}
         )
     
-    # CORS middleware
-    if config.cors.enabled:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=config.cors.origins,
-            allow_credentials=config.cors.allow_credentials,
-            allow_methods=config.cors.allow_methods,
-            allow_headers=config.cors.allow_headers,
-        )
-        logger.info("CORS enabled", extra={
-            'extra_fields': {'origins': config.cors.origins}
-        })
+    # CORS middleware - Allow all origins for Docker
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins
+        allow_credentials=False,  # Must be False with wildcard
+        allow_methods=["*"],  # Allow all methods
+        allow_headers=["*"],  # Allow all headers
+    )
+    logger.info("CORS enabled for all origins")
     
     # Request logging middleware 
     app.add_middleware(RequestLoggingMiddleware)

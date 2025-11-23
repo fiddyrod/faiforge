@@ -1,0 +1,13 @@
+# ===========================================
+# FAIForge - GPU Requirements (vLLM + CUDA)
+# ===========================================
+# Include base requirements
+-r requirements.txt
+
+# Local Model Serving
+vllm>=0.2.0
+
+# Note: vLLM will automatically install:
+# - torch
+# - transformers
+# - All NVIDIA CUDA libraries

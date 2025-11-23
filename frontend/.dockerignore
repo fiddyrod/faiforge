@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output (we build inside container)
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*
+
+# Misc
+README.md
+Dockerfile
+docker-compose*.yml

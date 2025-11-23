@@ -1,0 +1,42 @@
+# ============================================
+# FAIForge - Docker Compose Configuration
+# ============================================
+# Run with: docker-compose up -d
+# Stop with: docker-compose down
+
+version: "3.8"
+
+services:
+  # Backend API (FastAPI)
+  backend:
+    build: ./backend
+    container_name: faiforge-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - ENV=production
+      - LOAD_VLLM=false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Frontend (React + Nginx)
+  frontend:
+    build: ./frontend
+    container_name: faiforge-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped

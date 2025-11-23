@@ -1,8 +1,15 @@
 import yaml
 from typing import Dict, Optional
 from pathlib import Path
-from .adapters import LLMAdapter, OpenAIAdapter, AnthropicAdapter, VLLMAdapter
 
+# Import adapters (VLLMAdapter may be None if vllm not installed)
+from .adapters import (
+    LLMAdapter, 
+    OpenAIAdapter, 
+    AnthropicAdapter, 
+    VLLMAdapter,
+    VLLM_AVAILABLE
+)
 
 class ModelRegistry:
     """Registry for managing available models"""
@@ -71,6 +78,12 @@ def load_registry(
             registry.register(model_name, adapter)
 
         elif adapter_type == "vllm":
+            # Check if vLLM is installed
+            if not VLLM_AVAILABLE:
+                print(f"⚠️  Skipping {model_name} - vLLM not installed")
+                continue
+            
+            # Check if vLLM loading is enabled
             if not load_vllm:
                 print(f"⚠️  Skipping {model_name} - vLLM loading disabled")
                 continue

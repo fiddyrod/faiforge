@@ -1,0 +1,45 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment files (secrets!)
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+logs/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.docker/
+
+# Misc
+*.md
+docs/
+tests/
