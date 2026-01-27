@@ -1,0 +1,125 @@
+# RAG System Configuration
+
+# Embedding Configurations
+embeddings:
+  # OpenAI Embeddings (recommended for production)
+  openai-small:
+    adapter: openai
+    model: text-embedding-3-small
+    description: "Fast and affordable OpenAI embeddings (1536 dimensions, $0.02/1M tokens)"
+
+  openai-large:
+    adapter: openai
+    model: text-embedding-3-large
+    description: "High-quality OpenAI embeddings (3072 dimensions, $0.13/1M tokens)"
+
+  # HuggingFace Local Embeddings (free, no API key needed)
+  huggingface-minilm:
+    adapter: huggingface
+    model: sentence-transformers/all-MiniLM-L6-v2
+    device: null  # Auto-detect (cuda if available, else cpu)
+    description: "Fast local embeddings (384 dimensions, free)"
+
+# Chunking Strategies
+chunking:
+  # Recursive chunking (recommended default)
+  recursive-default:
+    strategy: recursive
+    chunk_size: 1000
+    chunk_overlap: 200
+    description: "Hierarchical text splitting (paragraphs -> sentences -> words)"
+
+  # Smaller chunks for precise retrieval
+  recursive-small:
+    strategy: recursive
+    chunk_size: 500
+    chunk_overlap: 50
+    description: "Smaller chunks for more precise retrieval"
+
+  # Semantic chunking (requires embeddings)
+  semantic:
+    strategy: semantic
+    embedding_adapter: openai-small
+    similarity_threshold: 0.5
+    max_chunk_size: 1500
+    description: "Intelligent chunking based on semantic boundaries"
+
+  # Fixed-size chunking (fastest)
+  fixed-size:
+    strategy: fixed_size
+    chunk_size: 1000
+    chunk_overlap: 100
+    description: "Simple fixed-size chunks with overlap"
+
+  # Token-based chunking (for LLM context windows)
+  token-based:
+    strategy: token
+    chunk_size: 512
+    chunk_overlap: 50
+    encoding: cl100k_base  # GPT-4 tokenizer
+    description: "Token-based chunking for accurate LLM context management"
+
+# Vector Store Configurations
+vector_stores:
+  # ChromaDB (recommended for development)
+  chroma-local:
+    provider: chromadb
+    collection_name: faiforge_documents
+    persist_directory: ./data/chroma_db
+    distance_metric: cosine
+    dimension: 1536
+    description: "Local embedded database (no server needed)"
+
+  # Pinecone (managed cloud service)
+  pinecone-prod:
+    provider: pinecone
+    index_name: faiforge-production
+    cloud: aws
+    region: us-east-1
+    dimension: 1536
+    distance_metric: cosine
+    description: "Managed cloud vector database (production)"
+
+  # Qdrant (self-hosted, Docker-friendly)
+  qdrant-local:
+    provider: qdrant
+    collection_name: faiforge_docs
+    url: http://localhost:6333
+    dimension: 1536
+    distance_metric: cosine
+    description: "Self-hosted vector search engine (Docker)"
+
+  # Weaviate (advanced open-source)
+  weaviate-local:
+    provider: weaviate
+    class_name: FAIForgeDocument
+    url: http://localhost:8080
+    dimension: 1536
+    distance_metric: cosine
+    description: "Advanced open-source vector database"
+
+# Default Pipeline Configurations
+pipelines:
+  # Development pipeline (fast, local, free)
+  development:
+    embedding: openai-small
+    chunking: recursive-default
+    vector_store: chroma-local
+    top_k: 5
+    description: "Fast development setup with ChromaDB"
+
+  # Production pipeline (high quality)
+  production:
+    embedding: openai-large
+    chunking: semantic
+    vector_store: pinecone-prod
+    top_k: 10
+    description: "Production setup with Pinecone and semantic chunking"
+
+  # Local-only pipeline (completely free, no API keys)
+  local:
+    embedding: huggingface-minilm
+    chunking: fixed-size
+    vector_store: chroma-local
+    top_k: 5
+    description: "Fully local setup with no API costs"

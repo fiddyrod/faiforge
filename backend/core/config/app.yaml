@@ -47,3 +47,8 @@ cache:
 rate_limit:
   enabled: false
   requests_per_minute: 60
+
+# RAG System Configuration
+rag:
+  config_path: "core/config/rag.yaml"
+  default_pipeline: "development"

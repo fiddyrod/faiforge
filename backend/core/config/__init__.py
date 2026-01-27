@@ -66,6 +66,13 @@ class RateLimitConfig:
 
 
 @dataclass
+class RAGConfig:
+    """RAG system configuration"""
+    config_path: str = "core/config/rag.yaml"
+    default_pipeline: str = "development"
+
+
+@dataclass
 class AppConfig:
     """Complete application configuration"""
     api: APIConfig
@@ -75,6 +82,7 @@ class AppConfig:
     observability: ObservabilityConfig
     cache: CacheConfig
     rate_limit: RateLimitConfig
+    rag: RAGConfig
 
 
 def load_yaml(file_path: str) -> dict:
@@ -148,7 +156,8 @@ def load_config(
         models=ModelsConfig(**config_dict.get("models", {})),
         observability=ObservabilityConfig(**config_dict.get("observability", {})),
         cache=CacheConfig(**config_dict.get("cache", {})),
-        rate_limit=RateLimitConfig(**config_dict.get("rate_limit", {}))
+        rate_limit=RateLimitConfig(**config_dict.get("rate_limit", {})),
+        rag=RAGConfig(**config_dict.get("rag", {}))
     )
 
 
