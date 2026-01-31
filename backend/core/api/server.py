@@ -325,7 +325,29 @@ def create_app(
 
     @app.get("/v1/models")
     async def list_models():
-        return {"models": registry.list()}
+        """List all available models and fallback chains"""
+        return {
+            "models": registry.list_models(),
+            "fallback_chains": registry.list_chains(),
+            "all": registry.list()
+        }
+
+    @app.get("/v1/health/providers")
+    async def provider_health():
+        """
+        Get health status of all providers in fallback chains.
+
+        Returns circuit breaker status, consecutive failures, and last error for each provider.
+        """
+        health_status = registry.get_health_status()
+        log_with_context(
+            logger, "debug", "Provider health check requested",
+            event="provider_health_check"
+        )
+        return {
+            "status": "ok",
+            "providers": health_status
+        }
 
     @app.post("/v1/chat/completions")
     async def chat_completion(

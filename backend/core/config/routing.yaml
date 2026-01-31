@@ -1,0 +1,117 @@
+# =============================================================================
+# Model Fallback & Smart Routing Configuration
+# =============================================================================
+
+# Fallback chains define the order of models to try when one fails
+# Each chain can be referenced by name in routing rules or API requests
+
+fallback_chains:
+  # Default chain - balanced cost/quality
+  default:
+    models:
+      - gpt-4o-mini      # Primary: fast and cheap
+      - claude-sonnet    # Fallback 1: good quality
+      - tinyllama        # Fallback 2: local, always available
+    retry:
+      max_retries: 3
+      base_delay: 1.0    # seconds
+      max_delay: 30.0    # seconds
+    circuit_breaker:
+      threshold: 5       # failures before marking unhealthy
+      recovery: 300      # seconds before retrying unhealthy provider
+
+  # High quality chain - for complex tasks
+  high_quality:
+    models:
+      - gpt-4o           # Primary: most capable
+      - claude-opus      # Fallback 1: also very capable
+      - gpt-4o-mini      # Fallback 2: still good, cheaper
+    retry:
+      max_retries: 2
+      base_delay: 2.0
+      max_delay: 60.0
+    circuit_breaker:
+      threshold: 3
+      recovery: 600
+
+  # Fast chain - for simple tasks, prioritize speed
+  fast:
+    models:
+      - gpt-4o-mini
+      - tinyllama
+    retry:
+      max_retries: 2
+      base_delay: 0.5
+      max_delay: 5.0
+    circuit_breaker:
+      threshold: 5
+      recovery: 120
+
+  # Local only - no cloud APIs
+  local_only:
+    models:
+      - tinyllama
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 10.0
+    circuit_breaker:
+      threshold: 10
+      recovery: 60
+
+
+# =============================================================================
+# Smart Routing Rules
+# =============================================================================
+# Rules are evaluated in order - first match wins
+# Available conditions:
+#   - has_tools: request includes tool definitions
+#   - max_tokens > N: max_tokens exceeds threshold
+#   - max_tokens < N: max_tokens below threshold
+#   - message_count > N: conversation has more than N messages
+#   - long_context: total message content > 4000 chars
+#   - default: always matches (use as last rule)
+
+routing:
+  enabled: true
+  default_chain: default
+
+  rules:
+    # Complex tasks with tools need capable models
+    - condition: has_tools
+      fallback_chain: high_quality
+      reason: "Tool use requires capable reasoning"
+
+    # Long outputs need capable models
+    - condition: max_tokens > 2000
+      fallback_chain: high_quality
+      reason: "Long outputs benefit from better models"
+
+    # Long conversations need context handling
+    - condition: message_count > 10
+      fallback_chain: high_quality
+      reason: "Long conversations need good context handling"
+
+    # Long context queries
+    - condition: long_context
+      fallback_chain: high_quality
+      reason: "Large context benefits from capable models"
+
+    # Short simple queries can use fast chain
+    - condition: max_tokens < 100
+      fallback_chain: fast
+      reason: "Short responses can use faster models"
+
+
+# =============================================================================
+# Health Check Configuration
+# =============================================================================
+
+health_check:
+  enabled: true
+  interval: 60          # seconds between health checks
+  timeout: 10           # seconds before health check times out
+
+  # Simple prompt used for health checks
+  test_prompt: "Say 'ok' and nothing else."
+  expected_response_contains: "ok"
