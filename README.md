@@ -3,7 +3,7 @@
 > A production-ready AI boilerplate with unified adapter patterns for LLMs, RAG, and intelligent routing
 
 ![Status](https://img.shields.io/badge/status-production--ready-green)
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Build AI applications faster.** FAIForge provides a complete foundation with multi-provider LLM support, RAG pipelines, streaming, function calling, and intelligent model routing—all with built-in observability and Docker deployment.
@@ -42,6 +42,7 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 - **Model Fallbacks** - Automatic failover when providers fail
 - **Smart Routing** - Route requests based on complexity/cost rules
 - **Circuit Breaker** - Auto-disable unhealthy providers
+- **Semantic Caching** - Cache similar queries to reduce costs & latency
 
 ### 📚 RAG (Retrieval-Augmented Generation)
 - **4 Vector Databases** - Pinecone, Weaviate, Qdrant, ChromaDB
@@ -135,7 +136,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 ## 🏗️ Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         FAIForge v2.0                           │
+│                         FAIForge v2.1                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────┐                                                │
@@ -219,6 +220,11 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 - `registry.py` - Model registry with routing support
 - Config-driven fallback chains
 
+**Semantic Cache (`/backend/core/cache`)**
+- `semantic.py` - SemanticCache with embedding similarity
+- `backends/` - Memory (dev) and Redis (production) backends
+- Configurable similarity threshold and TTL
+
 **RAG System (`/backend/core/rag`)**
 - Embedding adapters (OpenAI, HuggingFace)
 - Chunking strategies (recursive, semantic, token, fixed)
@@ -274,6 +280,15 @@ routing:
       fallback_chain: high_quality
     - condition: max_tokens > 2000
       fallback_chain: high_quality
+
+# Semantic caching (reduces API costs)
+cache:
+  enabled: true
+  backend: memory           # "memory" for dev, "redis" for prod
+  similarity_threshold: 0.95
+  ttl: 3600                 # 1 hour
+  redis:
+    url: "redis://localhost:6379"
 ```
 
 ### RAG Config (`backend/core/config/rag.yaml`)
@@ -328,6 +343,18 @@ GET /health
 ```bash
 GET /v1/health/providers
 # Response: {"status": "ok", "providers": {...circuit breaker status...}}
+```
+
+### Cache Stats
+```bash
+GET /v1/cache/stats
+# Response: {"enabled": true, "backend": "memory", "hit_rate": 0.85, "cache_size": 150}
+```
+
+### Clear Cache
+```bash
+POST /v1/cache/clear
+# Response: {"status": "ok", "entries_cleared": 150}
 ```
 
 ### List Models
@@ -474,7 +501,7 @@ docker-compose down
 | **Foundation** | Structured Outputs | ✅ Done | JSON mode for reliable parsing |
 | **Infra** | Model Fallbacks | ✅ Done | Auto-failover with circuit breaker |
 | **Infra** | Smart Routing | ✅ Done | Query-based model selection |
-| **Infra** | Semantic Caching | 🔜 Planned | Redis/GPTCache (after RAG merge) |
+| **Infra** | Semantic Caching | ✅ Done | Redis + In-Memory backends |
 | **RAG** | Vector Databases | ✅ Done | Pinecone, Weaviate, Qdrant, ChromaDB |
 | **RAG** | Embeddings | ✅ Done | OpenAI, HuggingFace (local) |
 | **RAG** | Chunking | ✅ Done | Recursive, semantic, token, fixed |
@@ -527,4 +554,4 @@ Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
 ---
 
-*FAIForge v2.0 - Production-ready AI infrastructure for modern applications* 🚀
+*FAIForge v2.1 - Production-ready AI infrastructure for modern applications* 🚀
