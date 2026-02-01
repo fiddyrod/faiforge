@@ -1,10 +1,13 @@
 import json
 import traceback
+import os
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+
+import yaml
 
 from ..inference.registry import load_registry
 from ..inference.adapters import (
@@ -14,6 +17,11 @@ from ..inference.adapters import (
     ToolCall,
     FunctionCallResult,
     ResponseFormat,
+)
+from ..cache import (
+    SemanticCache,
+    CacheConfig,
+    create_cache_backend,
 )
 from ..config import AppConfig
 from ..observability import RequestLoggingMiddleware, get_logger, log_with_context
@@ -206,7 +214,9 @@ async def stream_generator(adapter, messages, temperature, max_tokens, tools, to
 def create_app(
     config: AppConfig,
     openai_api_key: str,
-    anthropic_api_key: str = None
+    anthropic_api_key: str = None,
+    embedding_fn=None,
+    routing_config_path: str = "core/config/routing.yaml"
 ) -> FastAPI:
     """Create and configure FastAPI application"""
 
@@ -214,9 +224,41 @@ def create_app(
 
     app = FastAPI(
         title="FAIForge API",
-        version="1.0.0",
-        description="Production-ready AI boilerplate with streaming, function calling, and structured outputs"
+        version="2.0.0",
+        description="Production-ready AI boilerplate with streaming, function calling, structured outputs, and semantic caching"
     )
+
+    # =============================================================================
+    # Initialize Semantic Cache
+    # =============================================================================
+    semantic_cache: Optional[SemanticCache] = None
+    cache_config: Optional[CacheConfig] = None
+
+    try:
+        if os.path.exists(routing_config_path):
+            with open(routing_config_path, 'r') as f:
+                routing_yaml = yaml.safe_load(f)
+
+            if routing_yaml.get('cache', {}).get('enabled', False):
+                cache_config = CacheConfig.from_dict(routing_yaml.get('cache', {}))
+                backend = create_cache_backend(cache_config)
+
+                # Use provided embedding function or create placeholder
+                if embedding_fn:
+                    semantic_cache = SemanticCache(
+                        backend=backend,
+                        embedding_fn=embedding_fn,
+                        similarity_threshold=cache_config.similarity_threshold,
+                        config=cache_config
+                    )
+                    logger.info(
+                        f"Semantic cache enabled: backend={cache_config.backend}, "
+                        f"threshold={cache_config.similarity_threshold}"
+                    )
+                else:
+                    logger.warning("Cache enabled but no embedding function provided - cache disabled")
+    except Exception as e:
+        logger.warning(f"Failed to initialize semantic cache: {e}")
 
     # Global exception handler
     @app.exception_handler(Exception)
@@ -290,28 +332,39 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_event():
+        features = ["streaming", "function_calling", "structured_outputs", "fallback_routing"]
+        if semantic_cache:
+            features.append("semantic_caching")
+
         log_with_context(
             logger,
             "info",
             "FAIForge API started",
             event="app_startup",
-            version="1.0.0",
+            version="2.0.0",
             models_loaded=len(registry.list()),
             models=registry.list(),
-            features=["streaming", "function_calling", "structured_outputs"]
+            features=features,
+            cache_enabled=semantic_cache is not None
         )
 
     @app.on_event("shutdown")
     async def shutdown_event():
+        if semantic_cache:
+            await semantic_cache.close()
         log_with_context(logger, "info", "FAIForge API shutting down", event="app_shutdown")
 
     @app.get("/")
     async def root():
+        features = ["streaming", "function_calling", "structured_outputs", "fallback_routing"]
+        if semantic_cache:
+            features.append("semantic_caching")
+
         return {
             "name": "FAIForge API",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "status": "ok",
-            "features": ["streaming", "function_calling", "structured_outputs"]
+            "features": features
         }
 
     @app.get("/health")
@@ -349,10 +402,61 @@ def create_app(
             "providers": health_status
         }
 
+    # =============================================================================
+    # Cache Endpoints
+    # =============================================================================
+
+    @app.get("/v1/cache/stats")
+    async def cache_stats():
+        """
+        Get semantic cache statistics.
+
+        Returns hit rate, total queries, cache size, and average similarity on hits.
+        """
+        if not semantic_cache:
+            return {
+                "enabled": False,
+                "message": "Semantic cache is not enabled"
+            }
+
+        stats = await semantic_cache.get_stats()
+        return {
+            "enabled": True,
+            "backend": cache_config.backend if cache_config else "unknown",
+            "similarity_threshold": semantic_cache.similarity_threshold,
+            **stats
+        }
+
+    @app.post("/v1/cache/clear")
+    async def cache_clear():
+        """
+        Clear all semantic cache entries.
+
+        Returns the number of entries that were cleared.
+        """
+        if not semantic_cache:
+            raise HTTPException(
+                status_code=400,
+                detail="Semantic cache is not enabled"
+            )
+
+        count = await semantic_cache.clear()
+        log_with_context(
+            logger, "info",
+            f"Cache cleared: {count} entries removed",
+            event="cache_clear",
+            entries_cleared=count
+        )
+        return {
+            "status": "ok",
+            "entries_cleared": count
+        }
+
     @app.post("/v1/chat/completions")
     async def chat_completion(
         request: CompletionRequest,
-        stream: bool = Query(default=False, description="Enable streaming response")
+        stream: bool = Query(default=False, description="Enable streaming response"),
+        use_cache: bool = Query(default=True, description="Use semantic cache if available")
     ):
         """
         Create a chat completion.
@@ -362,6 +466,7 @@ def create_app(
         - Streaming via SSE (stream=true)
         - Function/tool calling (tools parameter)
         - Structured outputs (response_format parameter)
+        - Semantic caching (use_cache=true, default)
         """
 
         # Validate model exists
@@ -386,7 +491,47 @@ def create_app(
         # Get adapter
         adapter = registry.get(request.model)
 
-        # Handle streaming
+        # Generate cache key from last user message (for cache lookup)
+        cache_query = None
+        if semantic_cache and use_cache and not stream and not tools:
+            # Only cache simple queries without tools
+            user_messages = [m for m in request.messages if m.role == "user"]
+            if user_messages:
+                cache_query = user_messages[-1].content
+
+        # Check cache for hit
+        if cache_query:
+            try:
+                cache_result = await semantic_cache.get(
+                    cache_query,
+                    metadata_filter={"model": request.model}
+                )
+                if cache_result:
+                    cached_response, similarity = cache_result
+                    log_with_context(
+                        logger, "info",
+                        f"Cache hit: similarity={similarity:.4f}",
+                        event="cache_hit",
+                        similarity=similarity,
+                        model=request.model
+                    )
+                    return CompletionResponse(
+                        content=cached_response.get("content"),
+                        model=cached_response.get("model", request.model),
+                        usage=cached_response.get("usage", {
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0
+                        }),
+                        cost_usd=0.0,  # No cost for cached response
+                        latency_ms=0.0,  # Near-instant
+                        tool_calls=cached_response.get("tool_calls"),
+                        finish_reason=cached_response.get("finish_reason", "stop")
+                    )
+            except Exception as e:
+                logger.warning(f"Cache lookup failed: {e}")
+
+        # Handle streaming (not cached)
         if stream:
             return StreamingResponse(
                 stream_generator(
@@ -417,7 +562,7 @@ def create_app(
                 response_format=response_format
             )
 
-            return CompletionResponse(
+            response_data = CompletionResponse(
                 content=response.content,
                 model=response.model,
                 usage={
@@ -430,6 +575,28 @@ def create_app(
                 tool_calls=format_tool_calls_response(response.tool_calls),
                 finish_reason=response.finish_reason
             )
+
+            # Store in cache on miss (only for simple queries)
+            if cache_query and semantic_cache:
+                try:
+                    await semantic_cache.set(
+                        cache_query,
+                        {
+                            "content": response.content,
+                            "model": response.model,
+                            "usage": {
+                                "prompt_tokens": response.input_tokens,
+                                "completion_tokens": response.output_tokens,
+                                "total_tokens": response.input_tokens + response.output_tokens
+                            },
+                            "finish_reason": response.finish_reason
+                        },
+                        metadata={"model": request.model}
+                    )
+                except Exception as e:
+                    logger.warning(f"Cache store failed: {e}")
+
+            return response_data
 
         except Exception as e:
             log_with_context(

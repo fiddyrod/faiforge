@@ -13,8 +13,10 @@ from .fallback import (
 )
 
 __all__ = [
+    # Registry
     "ModelRegistry",
     "load_registry",
+    # Fallback
     "FallbackAdapter",
     "FallbackConfig",
     "RetryConfig",

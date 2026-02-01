@@ -104,6 +104,35 @@ routing:
 
 
 # =============================================================================
+# Semantic Caching Configuration
+# =============================================================================
+# Caches LLM responses and returns cached results for semantically similar queries
+# Reduces API costs and latency significantly for repeated/similar queries
+
+cache:
+  enabled: true
+  backend: memory       # "memory" for dev, "redis" for production
+
+  # Similarity threshold (0-1): higher = stricter matching
+  # 0.95 = very similar queries, 0.90 = somewhat similar
+  similarity_threshold: 0.95
+
+  # Maximum entries in cache (memory backend only)
+  max_entries: 10000
+
+  # Time-to-live for cache entries (seconds)
+  ttl: 3600             # 1 hour
+
+  # Namespace for cache keys (useful for multi-tenant setups)
+  namespace: "faiforge:cache"
+
+  # Redis configuration (when backend: redis)
+  redis:
+    url: "redis://localhost:6379"
+    db: 0
+
+
+# =============================================================================
 # Health Check Configuration
 # =============================================================================
 
