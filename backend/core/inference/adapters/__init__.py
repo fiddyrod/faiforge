@@ -11,6 +11,7 @@ from .base import (
 )
 from .openai_adapter import OpenAIAdapter
 from .anthropic_adapter import AnthropicAdapter
+from .ollama_adapter import OllamaAdapter
 
 # Optional vLLM import (requires GPU)
 try:
@@ -36,6 +37,7 @@ __all__ = [
     # Adapters
     "OpenAIAdapter",
     "AnthropicAdapter",
+    "OllamaAdapter",
     "VLLMAdapter",
     "VLLM_AVAILABLE",
 ]

@@ -11,7 +11,7 @@ fallback_chains:
     models:
       - gpt-4o-mini      # Primary: fast and cheap
       - claude-sonnet    # Fallback 1: good quality
-      - tinyllama        # Fallback 2: local, always available
+      - ollama/phi3      # Fallback 2: local, always available
     retry:
       max_retries: 3
       base_delay: 1.0    # seconds
@@ -38,7 +38,7 @@ fallback_chains:
   fast:
     models:
       - gpt-4o-mini
-      - tinyllama
+      - ollama/phi3
     retry:
       max_retries: 2
       base_delay: 0.5
@@ -47,10 +47,12 @@ fallback_chains:
       threshold: 5
       recovery: 120
 
-  # Local only - no cloud APIs
+  # Local only - no cloud APIs (uses Ollama)
   local_only:
     models:
-      - tinyllama
+      - ollama/llama3
+      - ollama/mistral
+      - ollama/phi3
     retry:
       max_retries: 3
       base_delay: 1.0
