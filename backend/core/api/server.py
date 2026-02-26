@@ -26,6 +26,20 @@ from ..cache import (
 from ..config import AppConfig
 from ..observability import RequestLoggingMiddleware, get_logger, log_with_context
 
+# RAG imports (optional - graceful fallback if deps missing)
+try:
+    from ..rag import (
+        RAGPipeline,
+        SearchMode,
+        HybridConfig,
+    )
+    from ..rag.embeddings.openai_embedding import OpenAIEmbedding
+    from ..rag.chunking.recursive_chunker import RecursiveChunker
+    from ..rag.vector_stores.chroma_store import ChromaStore
+    RAG_AVAILABLE = True
+except ImportError:
+    RAG_AVAILABLE = False
+
 
 # =============================================================================
 # Pydantic Models for API
@@ -85,6 +99,57 @@ class CompletionResponse(BaseModel):
     latency_ms: float
     tool_calls: Optional[List[ToolCallResponse]] = None
     finish_reason: str = "stop"
+
+
+# =============================================================================
+# RAG API Models
+# =============================================================================
+
+class RAGDocument(BaseModel):
+    """Document for RAG ingestion"""
+    content: str = Field(..., min_length=1, max_length=100000)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RAGIngestRequest(BaseModel):
+    """Request to ingest documents into RAG"""
+    documents: List[RAGDocument] = Field(..., min_length=1, max_length=100)
+
+
+class RAGIngestResponse(BaseModel):
+    """Response from RAG ingestion"""
+    documents_processed: int
+    chunks_created: int
+    embeddings_generated: int
+    bm25_indexed: int
+    total_latency_ms: float
+
+
+class RAGQueryRequest(BaseModel):
+    """Request to query RAG system"""
+    query: str = Field(..., min_length=1, max_length=2000)
+    top_k: int = Field(default=5, ge=1, le=20)
+    search_mode: str = Field(default="hybrid", pattern="^(semantic|bm25|hybrid)$")
+    filters: Optional[Dict[str, Any]] = None
+
+
+class RAGResult(BaseModel):
+    """Single RAG search result"""
+    id: str
+    content: str
+    score: float
+    metadata: Dict[str, Any]
+    semantic_score: Optional[float] = None
+    bm25_score: Optional[float] = None
+
+
+class RAGQueryResponse(BaseModel):
+    """Response from RAG query"""
+    query: str
+    results: List[RAGResult]
+    total_results: int
+    search_mode: str
+    latency_ms: float
 
 
 # =============================================================================
@@ -260,6 +325,11 @@ def create_app(
     except Exception as e:
         logger.warning(f"Failed to initialize semantic cache: {e}")
 
+    # =============================================================================
+    # RAG Pipeline (initialized on startup)
+    # =============================================================================
+    rag_pipeline: Optional["RAGPipeline"] = None
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -332,20 +402,56 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_event():
+        nonlocal rag_pipeline
+
         features = ["streaming", "function_calling", "structured_outputs", "fallback_routing"]
         if semantic_cache:
             features.append("semantic_caching")
+
+        # Initialize RAG pipeline
+        if RAG_AVAILABLE and openai_api_key:
+            try:
+                embedding_adapter = OpenAIEmbedding(
+                    api_key=openai_api_key,
+                    model="text-embedding-3-small"
+                )
+                chunking_adapter = RecursiveChunker(
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                vector_store = ChromaStore(
+                    collection_name="faiforge_documents",
+                    persist_directory="./data/chroma_db"
+                )
+                await vector_store.initialize()
+
+                rag_pipeline = RAGPipeline(
+                    embedding_adapter=embedding_adapter,
+                    chunking_adapter=chunking_adapter,
+                    vector_store_adapter=vector_store,
+                    hybrid_config=HybridConfig(
+                        enabled=True,
+                        semantic_weight=0.5,
+                        bm25_weight=0.5,
+                        fusion_method="rrf"
+                    )
+                )
+                features.append("rag_hybrid_search")
+                logger.info("RAG pipeline initialized with hybrid search")
+            except Exception as e:
+                logger.warning(f"RAG pipeline init failed: {e}")
 
         log_with_context(
             logger,
             "info",
             "FAIForge API started",
             event="app_startup",
-            version="2.0.0",
+            version="2.2.0",
             models_loaded=len(registry.list()),
             models=registry.list(),
             features=features,
-            cache_enabled=semantic_cache is not None
+            cache_enabled=semantic_cache is not None,
+            rag_enabled=rag_pipeline is not None
         )
 
     @app.on_event("shutdown")
@@ -608,5 +714,103 @@ def create_app(
                 error_type=type(e).__name__
             )
             raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+    # =============================================================================
+    # RAG Endpoints
+    # =============================================================================
+
+    @app.post("/v1/rag/ingest", response_model=RAGIngestResponse)
+    async def rag_ingest(request: RAGIngestRequest):
+        """
+        Ingest documents into the RAG system.
+
+        Chunks, embeds, stores in vector DB, and indexes for BM25.
+        """
+        if not rag_pipeline:
+            raise HTTPException(
+                status_code=503,
+                detail="RAG pipeline not available. Check OpenAI API key and chromadb installation."
+            )
+
+        try:
+            docs = [
+                {"content": doc.content, "metadata": doc.metadata}
+                for doc in request.documents
+            ]
+            result = await rag_pipeline.ingest_documents(docs)
+
+            return RAGIngestResponse(
+                documents_processed=result["documents_processed"],
+                chunks_created=result["chunks_created"],
+                embeddings_generated=result["embeddings_generated"],
+                bm25_indexed=result.get("bm25_indexed", 0),
+                total_latency_ms=result["total_latency_ms"]
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
+    @app.post("/v1/rag/query", response_model=RAGQueryResponse)
+    async def rag_query(request: RAGQueryRequest):
+        """
+        Query the RAG system.
+
+        Supports semantic, BM25, and hybrid search modes.
+        """
+        if not rag_pipeline:
+            raise HTTPException(
+                status_code=503,
+                detail="RAG pipeline not available."
+            )
+
+        try:
+            mode_map = {
+                "semantic": SearchMode.SEMANTIC,
+                "bm25": SearchMode.BM25,
+                "hybrid": SearchMode.HYBRID,
+            }
+            search_mode = mode_map.get(request.search_mode, SearchMode.HYBRID)
+
+            response = await rag_pipeline.query(
+                query_text=request.query,
+                top_k=request.top_k,
+                filters=request.filters,
+                search_mode=search_mode
+            )
+
+            results = [
+                RAGResult(
+                    id=r.id,
+                    content=r.content,
+                    score=r.score,
+                    metadata={k: v for k, v in r.metadata.items()
+                               if not k.startswith("_")},
+                    semantic_score=r.metadata.get("_semantic_score"),
+                    bm25_score=r.metadata.get("_bm25_score")
+                )
+                for r in response.results
+            ]
+
+            return RAGQueryResponse(
+                query=request.query,
+                results=results,
+                total_results=len(results),
+                search_mode=request.search_mode,
+                latency_ms=response.latency_ms
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+    @app.get("/v1/rag/stats")
+    async def rag_stats():
+        """Get RAG system statistics."""
+        if not rag_pipeline:
+            return {"enabled": False, "reason": "RAG pipeline not initialized"}
+
+        try:
+            stats = await rag_pipeline.get_stats()
+            stats["enabled"] = True
+            return stats
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get RAG stats: {str(e)}")
 
     return app
