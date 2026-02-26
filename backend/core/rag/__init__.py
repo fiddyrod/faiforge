@@ -64,7 +64,16 @@ from .registry import (
     load_rag_registry
 )
 
-from .pipeline import RAGPipeline
+from .pipeline import RAGPipeline, SearchMode, HybridConfig
+
+# Hybrid search
+from .search import (
+    HybridSearcher,
+    HybridSearchConfig,
+    BM25Retriever,
+    FusionMethod,
+    ScoredResult,
+)
 
 # Implementations (for direct instantiation if needed)
 from .embeddings import (
@@ -109,6 +118,15 @@ __all__ = [
     "RAGRegistry",
     "load_rag_registry",
     "RAGPipeline",
+    "SearchMode",
+    "HybridConfig",
+
+    # Hybrid search
+    "HybridSearcher",
+    "HybridSearchConfig",
+    "BM25Retriever",
+    "FusionMethod",
+    "ScoredResult",
 
     # Embedding implementations
     "OpenAIEmbedding",

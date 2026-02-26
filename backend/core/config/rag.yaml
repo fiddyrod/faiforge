@@ -98,6 +98,41 @@ vector_stores:
     distance_metric: cosine
     description: "Advanced open-source vector database"
 
+# Hybrid Search Configuration
+# Combines BM25 keyword search with semantic vector search
+hybrid_search:
+  # Default configuration
+  default:
+    enabled: true
+    semantic_weight: 0.5  # Weight for semantic (vector) search
+    bm25_weight: 0.5      # Weight for BM25 (keyword) search
+    fusion_method: rrf    # "rrf", "weighted_sum", "max", "min"
+    rrf_k: 60             # RRF ranking constant (only for RRF fusion)
+    description: "Balanced hybrid search with RRF fusion"
+
+  # Semantic-heavy configuration (better for conceptual queries)
+  semantic-heavy:
+    enabled: true
+    semantic_weight: 0.7
+    bm25_weight: 0.3
+    fusion_method: rrf
+    rrf_k: 60
+    description: "Prioritizes semantic similarity for conceptual searches"
+
+  # Keyword-heavy configuration (better for exact term matching)
+  keyword-heavy:
+    enabled: true
+    semantic_weight: 0.3
+    bm25_weight: 0.7
+    fusion_method: rrf
+    rrf_k: 60
+    description: "Prioritizes keyword matching for precise searches"
+
+  # Disabled (pure semantic search)
+  disabled:
+    enabled: false
+    description: "Pure semantic search without BM25"
+
 # Default Pipeline Configurations
 pipelines:
   # Development pipeline (fast, local, free)
@@ -105,21 +140,33 @@ pipelines:
     embedding: openai-small
     chunking: recursive-default
     vector_store: chroma-local
+    hybrid_search: default
     top_k: 5
-    description: "Fast development setup with ChromaDB"
+    description: "Fast development setup with ChromaDB and hybrid search"
 
   # Production pipeline (high quality)
   production:
     embedding: openai-large
     chunking: semantic
     vector_store: pinecone-prod
+    hybrid_search: semantic-heavy
     top_k: 10
-    description: "Production setup with Pinecone and semantic chunking"
+    description: "Production setup with Pinecone, semantic chunking, and hybrid search"
 
   # Local-only pipeline (completely free, no API keys)
   local:
     embedding: huggingface-minilm
     chunking: fixed-size
     vector_store: chroma-local
+    hybrid_search: default
     top_k: 5
     description: "Fully local setup with no API costs"
+
+  # Pure semantic pipeline (no hybrid)
+  semantic-only:
+    embedding: openai-small
+    chunking: recursive-default
+    vector_store: chroma-local
+    hybrid_search: disabled
+    top_k: 5
+    description: "Pure semantic search without BM25"

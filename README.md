@@ -3,7 +3,7 @@
 > A production-ready AI boilerplate with unified adapter patterns for LLMs, RAG, and intelligent routing
 
 ![Status](https://img.shields.io/badge/status-production--ready-green)
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-2.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Build AI applications faster.** FAIForge provides a complete foundation with multi-provider LLM support, RAG pipelines, streaming, function calling, and intelligent model routing—all with built-in observability and Docker deployment.
@@ -32,7 +32,8 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 ### 🔌 Multi-Provider LLM Architecture
 - **OpenAI** (GPT-4o, GPT-4o-mini)
 - **Anthropic** (Claude Opus 4, Claude Sonnet 4.5)
-- **vLLM** (Local models - TinyLlama, any HuggingFace model)
+- **Ollama** (Local models - Llama 3, Mistral, Phi-3, any Ollama model)
+- **vLLM** (GPU-accelerated local serving - any HuggingFace model)
 - Unified adapter pattern - switch providers with one line
 
 ### 🚀 Advanced LLM Capabilities
@@ -48,6 +49,7 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 - **4 Vector Databases** - Pinecone, Weaviate, Qdrant, ChromaDB
 - **2 Embedding Providers** - OpenAI, HuggingFace (local)
 - **4 Chunking Strategies** - Recursive, semantic, token-based, fixed-size
+- **Hybrid Search** - BM25 + semantic with RRF/weighted fusion
 - **Pipeline Orchestration** - End-to-end document ingestion & retrieval
 
 ### 📊 Production Observability
@@ -460,7 +462,7 @@ results = await pipeline.query("What is the main topic?", top_k=5)
 3. Handle `tools` and `response_format` parameters
 4. Register in `registry.py` and configure in `models.yaml`
 
-**Currently supported:** OpenAI, Anthropic, vLLM
+**Currently supported:** OpenAI, Anthropic, Ollama, vLLM
 **Easy to add:** Cohere, Google Gemini, Mistral AI, any OpenAI-compatible API
 
 ### Adding New Vector Stores
@@ -505,8 +507,9 @@ docker-compose down
 | **RAG** | Vector Databases | ✅ Done | Pinecone, Weaviate, Qdrant, ChromaDB |
 | **RAG** | Embeddings | ✅ Done | OpenAI, HuggingFace (local) |
 | **RAG** | Chunking | ✅ Done | Recursive, semantic, token, fixed |
-| **RAG** | Hybrid Search | 🔜 Planned | BM25 + semantic search |
-| **Evals** | RAG Evaluation | 🔜 Planned | Ragas/Arize integration |
+| **RAG** | Hybrid Search | ✅ Done | BM25 + semantic search with RRF fusion |
+| **Edge AI** | Ollama Adapter | ✅ Done | Local inference (Llama3, Mistral, Phi-3) |
+| **Evals** | RAG Evaluation | 🔜 Planned | Ragas integration |
 | **Evals** | LLM Response Eval | 🔜 Planned | Unit testing for AI |
 | **Evals** | Prompt A/B Testing | 🔜 Planned | Systematic prompt optimization |
 | **Agentic** | MCP Integration | 🔜 Planned | Model Context Protocol |
@@ -514,7 +517,6 @@ docker-compose down
 | **Agentic** | Human-in-the-loop | 🔜 Planned | Approval workflows |
 | **Observability** | Prometheus | 🔜 Planned | Metrics exporter |
 | **Observability** | LangSmith/W&B | 🔜 Planned | Tracing integration |
-| **Edge AI** | Ollama Adapter | 🔜 Planned | Local model inference |
 | **Edge AI** | llama.cpp/ONNX | 🔜 Planned | Quantized model support |
 | **Multimodal** | Vision Support | 🔜 Planned | GPT-4o, Gemini Vision |
 | **Multimodal** | Audio Processing | 🔜 Planned | Speech/audio input |
@@ -544,7 +546,7 @@ This project is open-source and available for use in personal or commercial proj
 
 ## 🙏 Acknowledgments
 
-Built with: **FastAPI**, **React**, **vLLM**, **Docker**, **Tailwind CSS**, **Pydantic**, **Nginx**
+Built with: **FastAPI**, **React**, **Ollama**, **vLLM**, **Docker**, **Tailwind CSS**, **Pydantic**, **Nginx**
 
 Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
@@ -554,4 +556,4 @@ Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
 ---
 
-*FAIForge v2.1 - Production-ready AI infrastructure for modern applications* 🚀
+*FAIForge v2.2 - Production-ready AI infrastructure for modern applications* 🚀
