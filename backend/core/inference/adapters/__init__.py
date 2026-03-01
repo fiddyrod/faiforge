@@ -21,6 +21,22 @@ except ImportError:
     VLLMAdapter = None
     VLLM_AVAILABLE = False
 
+# Optional Gemini import (requires google-generativeai)
+try:
+    from .gemini_adapter import GeminiAdapter
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GeminiAdapter = None
+    GEMINI_AVAILABLE = False
+
+# Optional Cohere import (requires cohere)
+try:
+    from .cohere_adapter import CohereAdapter
+    COHERE_AVAILABLE = True
+except ImportError:
+    CohereAdapter = None
+    COHERE_AVAILABLE = False
+
 __all__ = [
     # Base classes and types
     "LLMAdapter",
@@ -40,4 +56,8 @@ __all__ = [
     "OllamaAdapter",
     "VLLMAdapter",
     "VLLM_AVAILABLE",
+    "GeminiAdapter",
+    "GEMINI_AVAILABLE",
+    "CohereAdapter",
+    "COHERE_AVAILABLE",
 ]

@@ -1,7 +1,8 @@
 import json
 import traceback
 import os
-from fastapi import FastAPI, HTTPException, Request, Query
+import uuid
+from fastapi import FastAPI, HTTPException, Request, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from ..cache import (
 )
 from ..config import AppConfig
 from ..observability import RequestLoggingMiddleware, get_logger, log_with_context
+from .middleware import APIKeyMiddleware, RateLimitMiddleware
 from ..observability.metrics import (
     PrometheusMiddleware,
     metrics_response,
@@ -166,6 +168,14 @@ class RAGIngestResponse(BaseModel):
     embeddings_generated: int
     bm25_indexed: int
     total_latency_ms: float
+
+
+class RAGJobStatus(BaseModel):
+    """Status of an async ingestion job"""
+    job_id: str
+    status: str  # "pending" | "running" | "done" | "error"
+    result: Optional[RAGIngestResponse] = None
+    error: Optional[str] = None
 
 
 class RAGQueryRequest(BaseModel):
@@ -395,6 +405,8 @@ def create_app(
     config: AppConfig,
     openai_api_key: str,
     anthropic_api_key: str = None,
+    gemini_api_key: str = None,
+    cohere_api_key: str = None,
     embedding_fn=None,
     routing_config_path: str = "core/config/routing.yaml"
 ) -> FastAPI:
@@ -454,6 +466,11 @@ def create_app(
     llm_judge: Optional[LLMJudge] = None
     eval_pipeline: Optional[RAGEvalPipeline] = None
 
+    # =============================================================================
+    # Async ingestion job tracker (in-memory)
+    # =============================================================================
+    _ingest_jobs: Dict[str, RAGJobStatus] = {}
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -508,13 +525,21 @@ def create_app(
     # Prometheus metrics middleware
     app.add_middleware(PrometheusMiddleware)
 
+    # Rate limiting (must be added before auth so api_key is set on state first)
+    app.add_middleware(RateLimitMiddleware)
+
+    # API key authentication
+    app.add_middleware(APIKeyMiddleware)
+
     # Load model registry
     logger.info(f"Loading models from {config.models.config_path}")
     registry = load_registry(
         config.models.config_path,
         openai_api_key,
         anthropic_api_key,
-        load_vllm=config.models.load_vllm
+        load_vllm=config.models.load_vllm,
+        gemini_api_key=gemini_api_key,
+        cohere_api_key=cohere_api_key,
     )
     logger.info(f"Loaded {len(registry.list())} models: {', '.join(registry.list())}")
 
@@ -1001,12 +1026,17 @@ def create_app(
     # RAG Endpoints
     # =============================================================================
 
-    @app.post("/v1/rag/ingest", response_model=RAGIngestResponse)
-    async def rag_ingest(request: RAGIngestRequest):
+    @app.post("/v1/rag/ingest")
+    async def rag_ingest(
+        request: RAGIngestRequest,
+        background_tasks: BackgroundTasks,
+        background: bool = Query(default=False, description="Run ingestion in background and return job_id"),
+    ):
         """
         Ingest documents into the RAG system.
 
         Chunks, embeds, stores in vector DB, and indexes for BM25.
+        Set `background=true` to ingest asynchronously and poll `/v1/rag/jobs/{job_id}`.
         """
         if not rag_pipeline:
             raise HTTPException(
@@ -1014,11 +1044,40 @@ def create_app(
                 detail="RAG pipeline not available. Check OpenAI API key and chromadb installation."
             )
 
+        docs = [
+            {"content": doc.content, "metadata": doc.metadata}
+            for doc in request.documents
+        ]
+
+        if background:
+            job_id = str(uuid.uuid4())
+            _ingest_jobs[job_id] = RAGJobStatus(job_id=job_id, status="pending")
+
+            async def _run_ingestion():
+                _ingest_jobs[job_id].status = "running"
+                try:
+                    result = await rag_pipeline.ingest_documents(docs)
+                    rag_requests_total.labels(operation="ingest", status="success").inc()
+                    rag_documents_ingested_total.inc(result["documents_processed"])
+                    rag_chunks_created_total.inc(result["chunks_created"])
+                    _ingest_jobs[job_id].result = RAGIngestResponse(
+                        documents_processed=result["documents_processed"],
+                        chunks_created=result["chunks_created"],
+                        embeddings_generated=result["embeddings_generated"],
+                        bm25_indexed=result.get("bm25_indexed", 0),
+                        total_latency_ms=result["total_latency_ms"],
+                    )
+                    _ingest_jobs[job_id].status = "done"
+                except Exception as e:
+                    rag_requests_total.labels(operation="ingest", status="error").inc()
+                    _ingest_jobs[job_id].status = "error"
+                    _ingest_jobs[job_id].error = str(e)
+
+            background_tasks.add_task(_run_ingestion)
+            return JSONResponse(status_code=202, content={"job_id": job_id, "status": "pending"})
+
+        # Synchronous path (default)
         try:
-            docs = [
-                {"content": doc.content, "metadata": doc.metadata}
-                for doc in request.documents
-            ]
             result = await rag_pipeline.ingest_documents(docs)
 
             rag_requests_total.labels(operation="ingest", status="success").inc()
@@ -1035,6 +1094,14 @@ def create_app(
         except Exception as e:
             rag_requests_total.labels(operation="ingest", status="error").inc()
             raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
+    @app.get("/v1/rag/jobs/{job_id}", response_model=RAGJobStatus)
+    async def rag_job_status(job_id: str):
+        """Get the status of an async ingestion job."""
+        job = _ingest_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        return job
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse)
     async def rag_query(request: RAGQueryRequest):
