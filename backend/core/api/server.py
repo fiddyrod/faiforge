@@ -60,6 +60,28 @@ try:
 except ImportError:
     RERANKER_AVAILABLE = False
 
+# Evals imports (always available - zero required deps)
+from ..evals import (
+    LLMJudge,
+    InMemoryEvalStore,
+    ABRouter,
+    Experiment,
+    Variant,
+    RAGEvalPipeline,
+    EvalInput,
+)
+from ..evals.metrics import (
+    FaithfulnessMetric,
+    AnswerRelevancyMetric,
+    ContextPrecisionMetric,
+    ContextRecallMetric,
+)
+try:
+    import ragas  # noqa: F401
+    RAGAS_AVAILABLE = True
+except ImportError:
+    RAGAS_AVAILABLE = False
+
 
 # =============================================================================
 # Pydantic Models for API
@@ -191,6 +213,47 @@ class RAGDocumentListResponse(BaseModel):
 class RAGDeleteBySourceRequest(BaseModel):
     """Delete documents by source label"""
     source: str = Field(..., min_length=1)
+
+
+# =============================================================================
+# Evals API Models
+# =============================================================================
+
+class EvalJudgeRequest(BaseModel):
+    """Request to score a response with the LLM judge"""
+    question: str = Field(..., min_length=1, max_length=2000)
+    response: str = Field(..., min_length=1, max_length=10000)
+    context: str = Field(default="", max_length=10000)
+    model: Optional[str] = None  # override judge model (uses default if omitted)
+
+
+class EvalFeedbackRequest(BaseModel):
+    """Manual feedback + optional LLM judge evaluation"""
+    message_id: str = Field(..., min_length=1, max_length=128)
+    question: str = Field(..., min_length=1, max_length=2000)
+    response: str = Field(..., min_length=1, max_length=10000)
+    rating: Optional[str] = Field(default=None, pattern="^(thumbs_up|thumbs_down)$")
+    comment: Optional[str] = Field(default=None, max_length=1000)
+    run_judge: bool = Field(default=True, description="Also run LLM judge for a numeric score")
+
+
+class EvalRAGRequest(BaseModel):
+    """Request to run RAG eval metrics"""
+    question: str = Field(..., min_length=1, max_length=2000)
+    answer: str = Field(..., min_length=1, max_length=10000)
+    contexts: List[str] = Field(..., min_length=1, max_length=20)
+    ground_truth: Optional[str] = Field(default=None, max_length=10000)
+    metrics: Optional[List[str]] = Field(
+        default=None,
+        description="Metric names to run. Defaults to all: faithfulness, answer_relevancy, context_precision, context_recall"
+    )
+
+
+class ABExperimentRequest(BaseModel):
+    """Request to register an A/B experiment"""
+    id: str = Field(..., min_length=1, max_length=64)
+    variants: List[Dict[str, Any]] = Field(..., min_length=2, max_length=4)
+    routing: str = Field(default="random", pattern="^(random|round_robin)$")
 
 
 # =============================================================================
@@ -383,6 +446,14 @@ def create_app(
     rag_pipeline: Optional["RAGPipeline"] = None
     reranker: Optional["CrossEncoderReranker"] = None
 
+    # =============================================================================
+    # Evals (always available)
+    # =============================================================================
+    eval_store = InMemoryEvalStore()
+    ab_router = ABRouter(store=eval_store)
+    llm_judge: Optional[LLMJudge] = None
+    eval_pipeline: Optional[RAGEvalPipeline] = None
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -458,7 +529,7 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_event():
-        nonlocal rag_pipeline, reranker
+        nonlocal rag_pipeline, reranker, llm_judge, eval_pipeline
 
         features = ["streaming", "function_calling", "structured_outputs", "fallback_routing"]
         if semantic_cache:
@@ -506,17 +577,37 @@ def create_app(
             except Exception as e:
                 logger.warning(f"RAG pipeline init failed: {e}")
 
+        # Initialize LLM judge + eval pipeline (zero extra deps)
+        try:
+            models = registry.list()
+            if models:
+                default_adapter = registry.get(config.defaults.model)
+                llm_judge = LLMJudge(adapter=default_adapter)
+                eval_pipeline = RAGEvalPipeline(metrics=[
+                    FaithfulnessMetric(judge=llm_judge),
+                    AnswerRelevancyMetric(judge=llm_judge),
+                    ContextPrecisionMetric(judge=llm_judge),
+                    ContextRecallMetric(judge=llm_judge),
+                ])
+                features.append("llm_judge")
+                if RAGAS_AVAILABLE:
+                    features.append("ragas_evals")
+                logger.info("LLM judge and eval pipeline initialized")
+        except Exception as e:
+            logger.warning(f"Eval init failed: {e}")
+
         log_with_context(
             logger,
             "info",
             "FAIForge API started",
             event="app_startup",
-            version="2.3.0",
+            version="2.4.0",
             models_loaded=len(registry.list()),
             models=registry.list(),
             features=features,
             cache_enabled=semantic_cache is not None,
-            rag_enabled=rag_pipeline is not None
+            rag_enabled=rag_pipeline is not None,
+            evals_enabled=llm_judge is not None,
         )
         models_loaded_gauge.set(len(registry.list()))
 
@@ -636,6 +727,7 @@ def create_app(
         use_cache: bool = Query(default=True, description="Use semantic cache if available"),
         use_rag: bool = Query(default=False, description="Retrieve context from RAG pipeline and inject into prompt"),
         use_rerank: bool = Query(default=False, description="Apply cross-encoder reranking to RAG results"),
+        experiment_id: Optional[str] = Query(default=None, description="A/B experiment ID — injects variant system prompt"),
     ):
         """
         Create a chat completion.
@@ -647,6 +739,7 @@ def create_app(
         - Structured outputs (response_format parameter)
         - Semantic caching (use_cache=true, default)
         - RAG context injection (use_rag=true)
+        - A/B prompt testing (experiment_id=<id>)
         """
 
         # Validate model exists
@@ -667,6 +760,31 @@ def create_app(
         messages = convert_request_messages(request.messages)
         tools = convert_request_tools(request.tools) if request.tools else None
         response_format = convert_response_format(request.response_format) if request.response_format else None
+
+        # A/B experiment: inject variant system prompt
+        ab_variant = None
+        if experiment_id:
+            try:
+                ab_variant = ab_router.select_variant(experiment_id)
+                # Prepend variant system prompt (or replace existing system message)
+                has_system = any(m.role == "system" for m in messages)
+                if has_system:
+                    messages = [
+                        Message(role="system", content=ab_variant.system_prompt)
+                        if m.role == "system" else m
+                        for m in messages
+                    ]
+                else:
+                    messages = [Message(role="system", content=ab_variant.system_prompt)] + messages
+                log_with_context(
+                    logger, "info",
+                    f"A/B variant selected: {ab_variant.id}",
+                    event="ab_variant_selected",
+                    experiment_id=experiment_id,
+                    variant_id=ab_variant.id,
+                )
+            except KeyError as e:
+                raise HTTPException(status_code=404, detail=str(e))
 
         # Get adapter
         adapter = registry.get(request.model)
@@ -855,6 +973,15 @@ def create_app(
                     )
                 except Exception as e:
                     logger.warning(f"Cache store failed: {e}")
+
+            # Record A/B result
+            if ab_variant and experiment_id:
+                ab_router.record_result(experiment_id, ab_variant.id, {
+                    "latency_ms": response.latency_ms,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "cost_usd": response.cost_usd,
+                })
 
             return response_data
 
@@ -1048,5 +1175,169 @@ def create_app(
             return {"status": "ok", **result}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
+
+    # =========================================================================
+    # Evals Endpoints
+    # =========================================================================
+
+    @app.post("/v1/evals/judge")
+    async def eval_judge(request: EvalJudgeRequest):
+        """Score a response using the LLM judge (0-10 scale).
+
+        Returns a numeric score + reasoning. Useful for any quality evaluation,
+        not just RAG — forks can call this from anywhere.
+        """
+        if not llm_judge:
+            raise HTTPException(status_code=503, detail="LLM judge not available (no models loaded).")
+        try:
+            result = await llm_judge.judge(
+                question=request.question,
+                response=request.response,
+                context=request.context,
+            )
+            return {
+                "score": result.score,
+                "reasoning": result.reasoning,
+                "model": result.model,
+                "latency_ms": result.latency_ms,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Judge failed: {str(e)}")
+
+    @app.post("/v1/evals/feedback")
+    async def eval_feedback(request: EvalFeedbackRequest):
+        """Store manual feedback and optionally run the LLM judge.
+
+        Combines thumbs up/down human signal with optional AI scoring.
+        Stored in InMemoryEvalStore (swap to SQLite/Postgres via EvalStoreBackend protocol).
+        """
+        judge_result = None
+        if request.run_judge and llm_judge:
+            try:
+                judge_result_obj = await llm_judge.judge(
+                    question=request.question,
+                    response=request.response,
+                )
+                judge_result = {
+                    "score": judge_result_obj.score,
+                    "reasoning": judge_result_obj.reasoning,
+                    "model": judge_result_obj.model,
+                    "latency_ms": judge_result_obj.latency_ms,
+                }
+            except Exception as e:
+                logger.warning(f"Judge failed during feedback: {e}")
+
+        record = {
+            "message_id": request.message_id,
+            "question": request.question,
+            "response": request.response,
+            "rating": request.rating,
+            "comment": request.comment,
+            "judge_result": judge_result,
+        }
+        eval_store.append_feedback(record)
+
+        log_with_context(
+            logger, "info", "Feedback stored",
+            event="eval_feedback_stored",
+            message_id=request.message_id,
+            rating=request.rating,
+            judge_score=judge_result["score"] if judge_result else None,
+        )
+        return {
+            "status": "ok",
+            "feedback_id": record.get("id"),
+            "judge_result": judge_result,
+        }
+
+    @app.get("/v1/evals/feedback")
+    async def get_eval_feedback(
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ):
+        """List stored feedback records."""
+        return {
+            "feedbacks": eval_store.get_feedbacks(limit=limit, offset=offset),
+            "total": eval_store.total_feedbacks(),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @app.post("/v1/evals/rag")
+    async def eval_rag(request: EvalRAGRequest):
+        """Run RAG evaluation metrics against a question/answer/context triple.
+
+        Uses Ragas when installed, falls back to LLM-as-judge automatically.
+        Default metrics: faithfulness, answer_relevancy, context_precision, context_recall.
+        context_recall requires ground_truth.
+        """
+        if not eval_pipeline:
+            raise HTTPException(status_code=503, detail="Eval pipeline not available (no models loaded).")
+        try:
+            inp = EvalInput(
+                question=request.question,
+                answer=request.answer,
+                contexts=request.contexts,
+                ground_truth=request.ground_truth,
+            )
+            results = await eval_pipeline.run(inp, metric_names=request.metrics)
+            return {
+                "results": [
+                    {
+                        "metric": r.metric,
+                        "score": r.score,
+                        "reasoning": r.reasoning,
+                    }
+                    for r in results.values()
+                ],
+                "ragas_used": RAGAS_AVAILABLE,
+                "metrics_run": list(results.keys()),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Eval failed: {str(e)}")
+
+    @app.post("/v1/evals/ab/experiments")
+    async def create_ab_experiment(request: ABExperimentRequest):
+        """Register a new A/B prompt experiment.
+
+        Variants must each have 'id' and 'system_prompt'. 'weight' is optional (default 0.5).
+        Routing: 'random' (weighted) or 'round_robin'.
+
+        Pass experiment_id to /v1/chat/completions to route traffic through a variant.
+        """
+        try:
+            variants = [
+                Variant(
+                    id=v["id"],
+                    system_prompt=v["system_prompt"],
+                    weight=float(v.get("weight", 0.5)),
+                )
+                for v in request.variants
+            ]
+            experiment = Experiment(
+                id=request.id,
+                variants=variants,
+                routing=request.routing,
+            )
+            ab_router.register_experiment(experiment)
+            return {"status": "created", "experiment_id": request.id, "variants": [v.id for v in variants]}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to create experiment: {str(e)}")
+
+    @app.get("/v1/evals/ab/experiments")
+    async def list_ab_experiments():
+        """List all registered A/B experiments."""
+        return {"experiments": ab_router.list_experiments()}
+
+    @app.get("/v1/evals/ab/experiments/{experiment_id}/stats")
+    async def get_ab_stats(experiment_id: str):
+        """Get per-variant stats for an A/B experiment.
+
+        Returns: requests count, avg latency, avg tokens, avg cost per variant.
+        """
+        try:
+            return ab_router.get_stats(experiment_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found.")
 
     return app
