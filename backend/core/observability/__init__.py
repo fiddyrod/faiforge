@@ -121,11 +121,41 @@ def get_request_id() -> Optional[str]:
 # Export middleware
 from .middleware import RequestLoggingMiddleware
 
+# Export Prometheus metrics helpers
+from .metrics import (
+    PrometheusMiddleware,
+    metrics_response,
+    http_requests_total,
+    http_request_duration_seconds,
+    llm_requests_total,
+    llm_request_duration_seconds,
+    llm_tokens_total,
+    llm_cost_usd_total,
+    cache_requests_total,
+    rag_requests_total,
+    rag_documents_ingested_total,
+    rag_chunks_created_total,
+    models_loaded,
+)
+
 __all__ = [
     "setup_logging",
     "get_logger",
     "set_request_id",
     "get_request_id",
     "log_with_context",
-    "RequestLoggingMiddleware"
+    "RequestLoggingMiddleware",
+    "PrometheusMiddleware",
+    "metrics_response",
+    "http_requests_total",
+    "http_request_duration_seconds",
+    "llm_requests_total",
+    "llm_request_duration_seconds",
+    "llm_tokens_total",
+    "llm_cost_usd_total",
+    "cache_requests_total",
+    "rag_requests_total",
+    "rag_documents_ingested_total",
+    "rag_chunks_created_total",
+    "models_loaded",
 ]

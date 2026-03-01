@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import Mock, AsyncMock
-from core.config import AppConfig, APIConfig, CORSConfig, DefaultsConfig, ModelsConfig, ObservabilityConfig, CacheConfig, RateLimitConfig
+from core.config import AppConfig, APIConfig, CORSConfig, DefaultsConfig, ModelsConfig, ObservabilityConfig, CacheConfig, RateLimitConfig, RAGConfig
 from core.inference.registry import ModelRegistry
 
 
@@ -22,7 +22,8 @@ def mock_config():
         models=ModelsConfig(config_path="core/config/models.yaml", load_vllm=False),
         observability=ObservabilityConfig(log_level="INFO", log_format="json", request_logging=True),
         cache=CacheConfig(enabled=False, backend="redis", ttl_seconds=3600),
-        rate_limit=RateLimitConfig(enabled=False, requests_per_minute=60)
+        rate_limit=RateLimitConfig(enabled=False, requests_per_minute=60),
+        rag=RAGConfig()
     )
 
 

@@ -3,7 +3,7 @@ import traceback
 import os
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
@@ -25,6 +25,19 @@ from ..cache import (
 )
 from ..config import AppConfig
 from ..observability import RequestLoggingMiddleware, get_logger, log_with_context
+from ..observability.metrics import (
+    PrometheusMiddleware,
+    metrics_response,
+    llm_requests_total,
+    llm_request_duration_seconds,
+    llm_tokens_total,
+    llm_cost_usd_total,
+    cache_requests_total,
+    rag_requests_total,
+    rag_documents_ingested_total,
+    rag_chunks_created_total,
+    models_loaded as models_loaded_gauge,
+)
 
 # RAG imports (optional - graceful fallback if deps missing)
 try:
@@ -39,6 +52,13 @@ try:
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
+
+# Reranker import (optional - requires sentence-transformers)
+try:
+    from ..rag.reranking import CrossEncoderReranker
+    RERANKER_AVAILABLE = True
+except ImportError:
+    RERANKER_AVAILABLE = False
 
 
 # =============================================================================
@@ -99,6 +119,7 @@ class CompletionResponse(BaseModel):
     latency_ms: float
     tool_calls: Optional[List[ToolCallResponse]] = None
     finish_reason: str = "stop"
+    sources: Optional[List[Dict[str, Any]]] = None  # RAG source chunks when use_rag=true
 
 
 # =============================================================================
@@ -150,6 +171,26 @@ class RAGQueryResponse(BaseModel):
     total_results: int
     search_mode: str
     latency_ms: float
+
+
+class RAGDocumentListItem(BaseModel):
+    """A single document chunk in the list response"""
+    id: str
+    content: str
+    metadata: Dict[str, Any]
+
+
+class RAGDocumentListResponse(BaseModel):
+    """Response from listing RAG documents"""
+    documents: List[RAGDocumentListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class RAGDeleteBySourceRequest(BaseModel):
+    """Delete documents by source label"""
+    source: str = Field(..., min_length=1)
 
 
 # =============================================================================
@@ -223,8 +264,15 @@ def format_tool_calls_response(tool_calls) -> Optional[List[ToolCallResponse]]:
     ]
 
 
-async def stream_generator(adapter, messages, temperature, max_tokens, tools, tool_choice, response_format):
-    """Generate SSE stream from adapter"""
+async def stream_generator(
+    adapter, messages, temperature, max_tokens, tools, tool_choice, response_format,
+    rag_sources: Optional[List[Dict[str, Any]]] = None
+):
+    """Generate SSE stream from adapter.
+
+    If rag_sources is provided (use_rag=True), a final 'sources' event is emitted
+    after [DONE] so the client can display citations without waiting.
+    """
     try:
         async for chunk in adapter.complete_stream(
             messages=messages,
@@ -267,6 +315,10 @@ async def stream_generator(adapter, messages, temperature, max_tokens, tools, to
         # Send done signal
         yield "data: [DONE]\n\n"
 
+        # Emit RAG sources as a final event after DONE
+        if rag_sources:
+            yield f"data: {json.dumps({'sources': rag_sources})}\n\n"
+
     except Exception as e:
         error_data = {"error": str(e), "type": type(e).__name__}
         yield f"data: {json.dumps(error_data)}\n\n"
@@ -289,8 +341,8 @@ def create_app(
 
     app = FastAPI(
         title="FAIForge API",
-        version="2.0.0",
-        description="Production-ready AI boilerplate with streaming, function calling, structured outputs, and semantic caching"
+        version="2.3.0",
+        description="Production-ready AI boilerplate with streaming, function calling, structured outputs, semantic caching, hybrid RAG, and cross-encoder reranking"
     )
 
     # =============================================================================
@@ -326,9 +378,10 @@ def create_app(
         logger.warning(f"Failed to initialize semantic cache: {e}")
 
     # =============================================================================
-    # RAG Pipeline (initialized on startup)
+    # RAG Pipeline + Reranker (initialized on startup)
     # =============================================================================
     rag_pipeline: Optional["RAGPipeline"] = None
+    reranker: Optional["CrossEncoderReranker"] = None
 
     # Global exception handler
     @app.exception_handler(Exception)
@@ -381,6 +434,9 @@ def create_app(
     app.add_middleware(RequestLoggingMiddleware)
     logger.info("Request logging middleware enabled")
 
+    # Prometheus metrics middleware
+    app.add_middleware(PrometheusMiddleware)
+
     # Load model registry
     logger.info(f"Loading models from {config.models.config_path}")
     registry = load_registry(
@@ -402,7 +458,7 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_event():
-        nonlocal rag_pipeline
+        nonlocal rag_pipeline, reranker
 
         features = ["streaming", "function_calling", "structured_outputs", "fallback_routing"]
         if semantic_cache:
@@ -438,6 +494,15 @@ def create_app(
                 )
                 features.append("rag_hybrid_search")
                 logger.info("RAG pipeline initialized with hybrid search")
+
+                # Initialize reranker (lazy — model downloads on first use)
+                if RERANKER_AVAILABLE:
+                    try:
+                        reranker = CrossEncoderReranker()
+                        features.append("reranking")
+                        logger.info("Cross-encoder reranker initialized (model loads on first use)")
+                    except Exception as re:
+                        logger.warning(f"Reranker init failed: {re}")
             except Exception as e:
                 logger.warning(f"RAG pipeline init failed: {e}")
 
@@ -446,13 +511,14 @@ def create_app(
             "info",
             "FAIForge API started",
             event="app_startup",
-            version="2.2.0",
+            version="2.3.0",
             models_loaded=len(registry.list()),
             models=registry.list(),
             features=features,
             cache_enabled=semantic_cache is not None,
             rag_enabled=rag_pipeline is not None
         )
+        models_loaded_gauge.set(len(registry.list()))
 
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -468,7 +534,7 @@ def create_app(
 
         return {
             "name": "FAIForge API",
-            "version": "2.0.0",
+            "version": "2.3.0",
             "status": "ok",
             "features": features
         }
@@ -481,6 +547,11 @@ def create_app(
             event="health_check", models_loaded=models_count
         )
         return {"status": "healthy", "models_loaded": models_count}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics():
+        """Prometheus metrics endpoint (scrape target for prometheus.yml)."""
+        return metrics_response()
 
     @app.get("/v1/models")
     async def list_models():
@@ -562,7 +633,9 @@ def create_app(
     async def chat_completion(
         request: CompletionRequest,
         stream: bool = Query(default=False, description="Enable streaming response"),
-        use_cache: bool = Query(default=True, description="Use semantic cache if available")
+        use_cache: bool = Query(default=True, description="Use semantic cache if available"),
+        use_rag: bool = Query(default=False, description="Retrieve context from RAG pipeline and inject into prompt"),
+        use_rerank: bool = Query(default=False, description="Apply cross-encoder reranking to RAG results"),
     ):
         """
         Create a chat completion.
@@ -573,6 +646,7 @@ def create_app(
         - Function/tool calling (tools parameter)
         - Structured outputs (response_format parameter)
         - Semantic caching (use_cache=true, default)
+        - RAG context injection (use_rag=true)
         """
 
         # Validate model exists
@@ -597,9 +671,78 @@ def create_app(
         # Get adapter
         adapter = registry.get(request.model)
 
+        # RAG context injection
+        rag_sources: List[Dict[str, Any]] = []
+        if use_rag and rag_pipeline:
+            user_query = next(
+                (m.content for m in reversed(messages) if m.role == "user"), None
+            )
+            if user_query:
+                try:
+                    # Fetch more candidates when reranking so we can trim to top-5 after
+                    retrieval_top_k = 10 if (use_rerank and reranker) else 5
+                    rag_resp = await rag_pipeline.query(query_text=user_query, top_k=retrieval_top_k)
+                    if rag_resp.results:
+                        final_results = rag_resp.results
+
+                        # Rerank if requested and available
+                        if use_rerank and reranker:
+                            try:
+                                reranked = await reranker.rerank(
+                                    query=user_query,
+                                    results=rag_resp.results,
+                                    top_k=5,
+                                )
+                                # Convert RerankResult back to a duck-typed list
+                                final_results = reranked
+                                log_with_context(
+                                    logger, "info",
+                                    "Reranking applied to RAG results",
+                                    event="reranker_applied",
+                                    candidates=len(rag_resp.results),
+                                    top_k=len(final_results),
+                                )
+                            except Exception as re:
+                                logger.warning(f"Reranking failed (using original order): {re}")
+
+                        context_blocks = "\n\n---\n\n".join(
+                            f"[Source {i + 1}]\n{r.content}"
+                            for i, r in enumerate(final_results)
+                        )
+                        system_content = (
+                            "Answer the user's question using the context below. "
+                            "If the context is not relevant, answer from your own knowledge.\n\n"
+                            f"Context:\n{context_blocks}"
+                        )
+                        # Prepend system message (replaces any existing system message)
+                        messages = [Message(role="system", content=system_content)] + [
+                            m for m in messages if m.role != "system"
+                        ]
+                        rag_sources = [
+                            {
+                                "content": r.content[:300],
+                                "score": r.score,
+                                "metadata": {k: v for k, v in r.metadata.items()
+                                             if not k.startswith("_")},
+                            }
+                            for r in final_results
+                        ]
+                        rag_requests_total.labels(operation="query", status="success").inc()
+                        log_with_context(
+                            logger, "info",
+                            f"RAG retrieved {len(rag_sources)} sources for chat",
+                            event="rag_chat_retrieval",
+                            sources=len(rag_sources),
+                            reranked=use_rerank and reranker is not None,
+                            model=request.model
+                        )
+                except Exception as e:
+                    logger.warning(f"RAG retrieval failed (continuing without context): {e}")
+
         # Generate cache key from last user message (for cache lookup)
+        # Skip cache when use_rag=True — RAG responses are context-dependent and must not be served stale
         cache_query = None
-        if semantic_cache and use_cache and not stream and not tools:
+        if semantic_cache and use_cache and not stream and not tools and not use_rag:
             # Only cache simple queries without tools
             user_messages = [m for m in request.messages if m.role == "user"]
             if user_messages:
@@ -621,6 +764,7 @@ def create_app(
                         similarity=similarity,
                         model=request.model
                     )
+                    cache_requests_total.labels(result="hit").inc()
                     return CompletionResponse(
                         content=cached_response.get("content"),
                         model=cached_response.get("model", request.model),
@@ -634,6 +778,8 @@ def create_app(
                         tool_calls=cached_response.get("tool_calls"),
                         finish_reason=cached_response.get("finish_reason", "stop")
                     )
+                else:
+                    cache_requests_total.labels(result="miss").inc()
             except Exception as e:
                 logger.warning(f"Cache lookup failed: {e}")
 
@@ -647,7 +793,8 @@ def create_app(
                     max_tokens=request.max_tokens,
                     tools=tools,
                     tool_choice=request.tool_choice,
-                    response_format=response_format
+                    response_format=response_format,
+                    rag_sources=rag_sources if rag_sources else None,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -668,6 +815,12 @@ def create_app(
                 response_format=response_format
             )
 
+            llm_requests_total.labels(model=request.model, status="success").inc()
+            llm_request_duration_seconds.labels(model=request.model).observe(response.latency_ms / 1000)
+            llm_tokens_total.labels(model=request.model, token_type="prompt").inc(response.input_tokens)
+            llm_tokens_total.labels(model=request.model, token_type="completion").inc(response.output_tokens)
+            llm_cost_usd_total.labels(model=request.model).inc(response.cost_usd)
+
             response_data = CompletionResponse(
                 content=response.content,
                 model=response.model,
@@ -679,7 +832,8 @@ def create_app(
                 cost_usd=response.cost_usd,
                 latency_ms=response.latency_ms,
                 tool_calls=format_tool_calls_response(response.tool_calls),
-                finish_reason=response.finish_reason
+                finish_reason=response.finish_reason,
+                sources=rag_sources if rag_sources else None,
             )
 
             # Store in cache on miss (only for simple queries)
@@ -705,6 +859,7 @@ def create_app(
             return response_data
 
         except Exception as e:
+            llm_requests_total.labels(model=request.model, status="error").inc()
             log_with_context(
                 logger, "error",
                 f"Chat completion failed: {str(e)}",
@@ -739,6 +894,10 @@ def create_app(
             ]
             result = await rag_pipeline.ingest_documents(docs)
 
+            rag_requests_total.labels(operation="ingest", status="success").inc()
+            rag_documents_ingested_total.inc(result["documents_processed"])
+            rag_chunks_created_total.inc(result["chunks_created"])
+
             return RAGIngestResponse(
                 documents_processed=result["documents_processed"],
                 chunks_created=result["chunks_created"],
@@ -747,6 +906,7 @@ def create_app(
                 total_latency_ms=result["total_latency_ms"]
             )
         except Exception as e:
+            rag_requests_total.labels(operation="ingest", status="error").inc()
             raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse)
@@ -790,6 +950,7 @@ def create_app(
                 for r in response.results
             ]
 
+            rag_requests_total.labels(operation="query", status="success").inc()
             return RAGQueryResponse(
                 query=request.query,
                 results=results,
@@ -798,6 +959,7 @@ def create_app(
                 latency_ms=response.latency_ms
             )
         except Exception as e:
+            rag_requests_total.labels(operation="query", status="error").inc()
             raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
     @app.get("/v1/rag/stats")
@@ -812,5 +974,79 @@ def create_app(
             return stats
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get RAG stats: {str(e)}")
+
+    # =========================================================================
+    # Document Management Endpoints
+    # =========================================================================
+
+    @app.get("/v1/rag/documents", response_model=RAGDocumentListResponse)
+    async def list_rag_documents(
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        source: Optional[str] = Query(default=None, description="Filter by source label"),
+    ):
+        """List ingested document chunks with metadata."""
+        if not rag_pipeline:
+            raise HTTPException(status_code=503, detail="RAG pipeline not available.")
+        try:
+            filters = {"source": source} if source else None
+            result = await rag_pipeline.vector_store.list_documents(
+                limit=limit, offset=offset, filters=filters
+            )
+            return RAGDocumentListResponse(
+                documents=[RAGDocumentListItem(**d) for d in result["documents"]],
+                total=result["total"],
+                limit=result["limit"],
+                offset=result["offset"],
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+    @app.delete("/v1/rag/documents/{doc_id}")
+    async def delete_rag_document(doc_id: str):
+        """Delete a single document chunk by its ID."""
+        if not rag_pipeline:
+            raise HTTPException(status_code=503, detail="RAG pipeline not available.")
+        try:
+            result = await rag_pipeline.vector_store.delete(ids=[doc_id])
+            log_with_context(
+                logger, "info", f"Deleted RAG document: {doc_id}",
+                event="rag_document_delete", doc_id=doc_id
+            )
+            return {"status": "ok", "deleted_id": doc_id, **result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+    @app.delete("/v1/rag/documents")
+    async def delete_rag_documents_by_source(request: RAGDeleteBySourceRequest):
+        """Delete all chunks that share a source label."""
+        if not rag_pipeline:
+            raise HTTPException(status_code=503, detail="RAG pipeline not available.")
+        try:
+            result = await rag_pipeline.vector_store.delete(
+                filters={"source": request.source}
+            )
+            log_with_context(
+                logger, "info", f"Deleted RAG documents by source: {request.source}",
+                event="rag_document_delete_by_source", source=request.source
+            )
+            return {"status": "ok", "source": request.source, **result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+    @app.post("/v1/rag/documents/clear")
+    async def clear_rag_documents():
+        """Delete ALL document chunks from the vector store."""
+        if not rag_pipeline:
+            raise HTTPException(status_code=503, detail="RAG pipeline not available.")
+        try:
+            result = await rag_pipeline.vector_store.clear_collection()
+            log_with_context(
+                logger, "info", "RAG collection cleared",
+                event="rag_collection_clear", **result
+            )
+            return {"status": "ok", **result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
 
     return app

@@ -52,3 +52,6 @@ docs/notes/
 PROJECT_READY_SUMMARY.md
 README.backup.md
 .archive/
+
+# Runtime data
+backend/data/

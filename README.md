@@ -3,7 +3,7 @@
 > A production-ready AI boilerplate with unified adapter patterns for LLMs, RAG, and intelligent routing
 
 ![Status](https://img.shields.io/badge/status-production--ready-green)
-![Version](https://img.shields.io/badge/version-2.2.0-blue)
+![Version](https://img.shields.io/badge/version-2.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Build AI applications faster.** FAIForge provides a complete foundation with multi-provider LLM support, RAG pipelines, streaming, function calling, and intelligent model routing—all with built-in observability and Docker deployment.
@@ -74,7 +74,10 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 
 ### 🎨 Full-Stack Ready
 - **FastAPI backend** - Modern, async Python
-- **React + TypeScript frontend** - Beautiful chat UI
+- **React + TypeScript frontend** - 3-tab UI (Chat, RAG, Stats)
+  - **Chat tab** - Multi-model selector including Ollama local models, streaming responses
+  - **RAG tab** - Document upload, paste text, hybrid/semantic/BM25 mode toggle, scored results
+  - **Stats tab** - Live cache stats, RAG corpus stats, cache clear
 - **Nginx reverse proxy** - Production-grade serving
 - **API documentation** - Auto-generated OpenAPI/Swagger
 
@@ -138,7 +141,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 ## 🏗️ Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         FAIForge v2.1                           │
+│                         FAIForge v2.3                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────┐                                                │
@@ -173,14 +176,14 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 │  │                              ↓                              ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
 │  │  │  LLM Adapters                                        │   ││
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐            │   ││
-│  │  │  │ OpenAI   │ │Anthropic │ │  vLLM    │            │   ││
-│  │  │  │ GPT-4o   │ │ Claude   │ │ (local)  │            │   ││
-│  │  │  └────┬─────┘ └────┬─────┘ └──────────┘            │   ││
-│  │  │       │            │                                │   ││
-│  │  └───────┼────────────┼────────────────────────────────┘   ││
-│  │          ↓            ↓                                     ││
-│  │    api.openai.com   api.anthropic.com                      ││
+│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   ││
+│  │  │  │ OpenAI   │ │Anthropic │ │  Ollama  │ │  vLLM    │ │   ││
+│  │  │  │ GPT-4o   │ │ Claude   │ │ (local)  │ │ (GPU)    │ │   ││
+│  │  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────────┘ │   ││
+│  │  │       │            │            │                      │   ││
+│  │  └───────┼────────────┼────────────┼──────────────────────┘   ││
+│  │          ↓            ↓            ↓                          ││
+│  │    api.openai.com  api.anthropic  localhost:11434             ││
 │  │                                                             ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
 │  │  │  RAG Pipeline                                        │   ││
@@ -263,7 +266,7 @@ models:
 ```yaml
 fallback_chains:
   default:
-    models: [gpt-4o-mini, claude-sonnet, tinyllama]
+    models: [gpt-4o-mini, claude-sonnet, ollama/phi3]  # local as final fallback
     retry:
       max_retries: 3
       base_delay: 1.0
@@ -273,6 +276,9 @@ fallback_chains:
 
   high_quality:
     models: [gpt-4o, claude-opus, gpt-4o-mini]
+
+  local_only:
+    models: [ollama/llama3, ollama/mistral, ollama/phi3]
 
 routing:
   enabled: true
@@ -415,6 +421,38 @@ POST /v1/chat/completions
 }
 ```
 
+### RAG - Ingest Documents
+```bash
+POST /v1/rag/ingest
+Content-Type: application/json
+
+{
+  "documents": [
+    {"text": "Your document content here...", "source": "my-doc.txt"}
+  ]
+}
+# Response: {"status": "ok", "chunks_created": 12, "documents_ingested": 1}
+```
+
+### RAG - Query
+```bash
+POST /v1/rag/query
+Content-Type: application/json
+
+{
+  "query": "What is the main topic?",
+  "top_k": 5,
+  "search_mode": "hybrid"   # "hybrid" | "semantic" | "bm25"
+}
+# Response: {"results": [{"text": "...", "source": "...", "score": 0.92, "semantic_score": 0.89, "bm25_score": 0.74}]}
+```
+
+### RAG - Stats
+```bash
+GET /v1/rag/stats
+# Response: {"total_chunks": 42, "total_documents": 3, "hybrid_search": {"enabled": true, "fusion_method": "rrf"}}
+```
+
 **Full API docs:** http://localhost:8000/docs
 
 ---
@@ -431,25 +469,41 @@ FAIForge includes a complete RAG (Retrieval-Augmented Generation) system with pl
 | **Chunking** | Recursive (smart splitting), Semantic (similarity-based), Token-based (LLM-aware), Fixed-size |
 | **Vector Stores** | ChromaDB (embedded), Pinecone (managed), Qdrant (self-hosted), Weaviate (open-source) |
 
-### Usage
+### Search Modes
+
+| Mode | Description |
+|------|-------------|
+| `semantic` | Dense vector search via embeddings - best for conceptual similarity |
+| `bm25` | Sparse keyword retrieval (Okapi BM25) - best for exact term matching |
+| `hybrid` | BM25 + semantic fused with RRF (Reciprocal Rank Fusion) - best overall |
+
+### Python Usage
 
 ```python
-from core.rag import RAGPipeline, RAGRegistry
+from core.rag import RAGPipeline, RAGRegistry, SearchMode, HybridConfig
 
-# Initialize
+# Initialize with hybrid search enabled
 registry = RAGRegistry()
 pipeline = RAGPipeline(
     embedding_adapter=registry.get_embedding("openai"),
     chunking_adapter=registry.get_chunking("recursive"),
-    vector_store=registry.get_vector_store("chroma")
+    vector_store=registry.get_vector_store("chroma"),
+    hybrid_config=HybridConfig(enabled=True, semantic_weight=0.6, bm25_weight=0.4)
 )
 
 # Ingest documents
-await pipeline.ingest(documents)
+await pipeline.ingest_documents(documents)
 
-# Query
+# Query with hybrid search (default)
 results = await pipeline.query("What is the main topic?", top_k=5)
+
+# Query with specific search mode
+results = await pipeline.query("exact keyword match", top_k=5, search_mode=SearchMode.BM25)
 ```
+
+### REST API
+
+The RAG system is also exposed via REST endpoints - see the [API Reference](#-api-reference) section for `/v1/rag/ingest`, `/v1/rag/query`, and `/v1/rag/stats`.
 
 ---
 
@@ -556,4 +610,4 @@ Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
 ---
 
-*FAIForge v2.2 - Production-ready AI infrastructure for modern applications* 🚀
+*FAIForge v2.3 - Production-ready AI infrastructure for modern applications* 🚀

@@ -29,7 +29,7 @@ defaults:
 # Model Registry
 models:
   config_path: "core/config/models.yaml"
-  load_vllm: true  # Set to false to disable local models
+  load_vllm: false  # Disabled — vLLM crashes in WSL; enable on bare-metal Linux with CUDA
 
 # Observability (We'll use this in Session 4)
 observability:

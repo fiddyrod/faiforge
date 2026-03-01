@@ -17,7 +17,7 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "FAIForge API"
-        assert data["version"] == "1.0.0"
+        assert data["version"] == "2.3.0"
         assert data["status"] == "ok"
 
     def test_health_endpoint(self, mock_config, api_keys):
