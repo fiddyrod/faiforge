@@ -3,7 +3,7 @@
 > A production-ready AI boilerplate with unified adapter patterns for LLMs, RAG, and intelligent routing
 
 ![Status](https://img.shields.io/badge/status-production--ready-green)
-![Version](https://img.shields.io/badge/version-2.3.0-blue)
+![Version](https://img.shields.io/badge/version-2.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Build AI applications faster.** FAIForge provides a complete foundation with multi-provider LLM support, RAG pipelines, streaming, function calling, and intelligent model routing—all with built-in observability and Docker deployment.
@@ -32,6 +32,8 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 ### 🔌 Multi-Provider LLM Architecture
 - **OpenAI** (GPT-4o, GPT-4o-mini)
 - **Anthropic** (Claude Opus 4, Claude Sonnet 4.5)
+- **Google Gemini** (gemini-2.0-flash, gemini-1.5-pro/flash)
+- **Cohere** (Command R+, Command R)
 - **Ollama** (Local models - Llama 3, Mistral, Phi-3, any Ollama model)
 - **vLLM** (GPU-accelerated local serving - any HuggingFace model)
 - Unified adapter pattern - switch providers with one line
@@ -50,14 +52,25 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 - **2 Embedding Providers** - OpenAI, HuggingFace (local)
 - **4 Chunking Strategies** - Recursive, semantic, token-based, fixed-size
 - **Hybrid Search** - BM25 + semantic with RRF/weighted fusion
-- **Pipeline Orchestration** - End-to-end document ingestion & retrieval
+- **Cross-Encoder Reranker** - Post-retrieval reranking (`use_rerank=true`)
+- **RAG-embedded Chat** - `use_rag=true` injects context into any chat completion
+- **Document Management** - List and delete ingested chunks via API
+- **Async Ingestion** - `background=true` returns job ID immediately
 
-### 📊 Production Observability
-- **Structured JSON logging** - Machine-parseable logs
-- **Request correlation IDs** - Trace requests end-to-end
+### 🧪 Evals & Observability
+- **LLM Judge** - 0–10 AI scoring of any response
+- **RAG Metrics** - Faithfulness, answer relevancy, context precision/recall (Ragas-first, LLM-judge fallback)
+- **Prompt A/B Testing** - ABRouter with round-robin and weighted-random routing
+- **"Rate This" UI** - Thumbs up/down + AI judge button on every chat message
+- **Prometheus metrics** - `/metrics` endpoint for Grafana/alerting
+- **Structured JSON logging** - Machine-parseable logs with correlation IDs
 - **Automatic cost tracking** - Per-request pricing for all providers
-- **Performance monitoring** - Latency, token counts, error rates
 - **Provider health checks** - Circuit breaker status monitoring
+
+### 🔒 Enterprise Middleware
+- **API Key Auth** - Bearer token authentication; set `FAIFORGE_API_KEYS` to enable
+- **Rate Limiting** - Per-key sliding window; 429 + `Retry-After` header
+- **Zero-config dev mode** - Auth/rate limiting auto-disabled when keys not set
 
 ### ⚙️ Configuration-Driven
 - **YAML-based config** - No hardcoded values
@@ -74,10 +87,11 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 
 ### 🎨 Full-Stack Ready
 - **FastAPI backend** - Modern, async Python
-- **React + TypeScript frontend** - 3-tab UI (Chat, RAG, Stats)
-  - **Chat tab** - Multi-model selector including Ollama local models, streaming responses
-  - **RAG tab** - Document upload, paste text, hybrid/semantic/BM25 mode toggle, scored results
+- **React + TypeScript frontend** - 4-tab UI (Chat, RAG, Stats, Evals)
+  - **Chat tab** - Multi-model selector, streaming, RAG toggle, collapsible source citations, "Rate This" AI judge panel
+  - **RAG tab** - Document ingest, hybrid/semantic/BM25 search, document browser with per-chunk deletion
   - **Stats tab** - Live cache stats, RAG corpus stats, cache clear
+  - **Evals tab** - Feedback log, A/B experiment stats
 - **Nginx reverse proxy** - Production-grade serving
 - **API documentation** - Auto-generated OpenAPI/Swagger
 
@@ -87,8 +101,8 @@ The adapter pattern solves this. Now I can compare GPT-4o vs Claude with just a 
 
 ### Prerequisites
 - Docker & Docker Compose
-- OpenAI API key
-- Anthropic API key (optional)
+- OpenAI API key (required)
+- Anthropic, Gemini, or Cohere API keys (optional)
 
 ### 1. Clone & Setup
 ```bash
@@ -97,7 +111,7 @@ cd faiforge
 
 # Add your API keys
 cp backend/.env.example backend/.env
-nano backend/.env  # Add your OPENAI_API_KEY and ANTHROPIC_API_KEY
+nano backend/.env  # Add your keys (see Environment Variables section)
 ```
 
 ### 2. Start Everything
@@ -141,7 +155,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 ## 🏗️ Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         FAIForge v2.3                           │
+│                         FAIForge v2.5                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────┐                                                │
@@ -151,52 +165,55 @@ curl -X POST "http://localhost:8000/v1/chat/completions?stream=true" \
 │         ↓                                                       │
 │  ┌─────────────────────────────────┐                           │
 │  │  Frontend (React + Nginx)       │                           │
-│  │  Port: 3000                     │                           │
+│  │  Port: 3000  (4 tabs)           │                           │
+│  │  Chat │ RAG │ Stats │ Evals     │                           │
 │  └──────┬──────────────────────────┘                           │
 │         │ Proxy /v1/* → backend:8000                           │
 │         ↓                                                       │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │  Backend (FastAPI) - Port: 8000                             ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
+│  │  │  Middleware                                          │   ││
+│  │  │  • API Key Auth (Bearer)  • Rate Limiting (per-key) │   ││
+│  │  └───────────────────────────┬─────────────────────────┘   ││
+│  │                              ↓                              ││
+│  │  ┌─────────────────────────────────────────────────────┐   ││
 │  │  │  API Layer                                           │   ││
 │  │  │  • Streaming (SSE)    • Function Calling            │   ││
-│  │  │  • Structured Outputs • Provider Health             │   ││
+│  │  │  • Structured Outputs • RAG-embedded Chat           │   ││
 │  │  └───────────────────────────┬─────────────────────────┘   ││
 │  │                              ↓                              ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
-│  │  │  Smart Router                                        │   ││
-│  │  │  • Query-based routing  • Complexity detection      │   ││
+│  │  │  Smart Router + Fallback Adapter                     │   ││
+│  │  │  • Query-based routing  • Circuit breaker           │   ││
+│  │  │  • Retry with backoff   • Provider failover         │   ││
 │  │  └───────────────────────────┬─────────────────────────┘   ││
 │  │                              ↓                              ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
-│  │  │  Fallback Adapter                                    │   ││
-│  │  │  • Retry with backoff   • Circuit breaker           │   ││
-│  │  │  • Provider failover    • Health tracking           │   ││
-│  │  └───────────────────────────┬─────────────────────────┘   ││
-│  │                              ↓                              ││
-│  │  ┌─────────────────────────────────────────────────────┐   ││
-│  │  │  LLM Adapters                                        │   ││
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   ││
-│  │  │  │ OpenAI   │ │Anthropic │ │  Ollama  │ │  vLLM    │ │   ││
-│  │  │  │ GPT-4o   │ │ Claude   │ │ (local)  │ │ (GPU)    │ │   ││
-│  │  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────────┘ │   ││
-│  │  │       │            │            │                      │   ││
-│  │  └───────┼────────────┼────────────┼──────────────────────┘   ││
-│  │          ↓            ↓            ↓                          ││
-│  │    api.openai.com  api.anthropic  localhost:11434             ││
+│  │  │  LLM Adapters (6 providers)                          │   ││
+│  │  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐        │   ││
+│  │  │  │OpenAI  │ │Anthropic│ │Gemini  │ │Cohere  │        │   ││
+│  │  │  └────────┘ └────────┘ └────────┘ └────────┘        │   ││
+│  │  │  ┌────────┐ ┌────────┐                               │   ││
+│  │  │  │Ollama  │ │ vLLM   │                               │   ││
+│  │  │  │(local) │ │ (GPU)  │                               │   ││
+│  │  │  └────────┘ └────────┘                               │   ││
+│  │  └─────────────────────────────────────────────────────┘   ││
 │  │                                                             ││
 │  │  ┌─────────────────────────────────────────────────────┐   ││
 │  │  │  RAG Pipeline                                        │   ││
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐            │   ││
-│  │  │  │Embeddings│→│ Chunking │→│  Vector  │            │   ││
-│  │  │  │OpenAI/HF │ │4 methods │ │  Store   │            │   ││
-│  │  │  └──────────┘ └──────────┘ └──────────┘            │   ││
-│  │  │                             ↓                       │   ││
-│  │  │                      Pinecone│Weaviate│Qdrant│Chroma│   ││
+│  │  │  Embeddings → Chunking → Vector Store               │   ││
+│  │  │  + Hybrid Search (BM25+semantic) + Reranker         │   ││
+│  │  │  Pinecone │ Weaviate │ Qdrant │ ChromaDB            │   ││
+│  │  └─────────────────────────────────────────────────────┘   ││
+│  │                                                             ││
+│  │  ┌─────────────────────────────────────────────────────┐   ││
+│  │  │  Evals                                               │   ││
+│  │  │  LLM Judge • RAG Metrics • A/B Testing              │   ││
 │  │  └─────────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                 │
-│  Observability: JSON logs • Correlation IDs • Cost tracking    │
+│  Observability: Prometheus /metrics • JSON logs • Cost tracking│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -329,11 +346,20 @@ vector_stores:
 ```bash
 # Required
 OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
 
-# Optional
+# LLM Providers (optional — models skipped if key not set)
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=...
+COHERE_API_KEY=...
+
+# Enterprise (optional — disabled when not set)
+FAIFORGE_API_KEYS=key1,key2,key3   # Bearer token auth
+FAIFORGE_RATE_LIMIT_REQUESTS=60    # requests per window (default: 60)
+FAIFORGE_RATE_LIMIT_WINDOW=60      # window in seconds (default: 60)
+
+# Infrastructure
 ENV=production              # development | production
-LOAD_VLLM=false            # Enable local models
+LOAD_VLLM=false            # Enable GPU local models
 PINECONE_API_KEY=...       # For Pinecone vector store
 ```
 
@@ -453,6 +479,58 @@ GET /v1/rag/stats
 # Response: {"total_chunks": 42, "total_documents": 3, "hybrid_search": {"enabled": true, "fusion_method": "rrf"}}
 ```
 
+### RAG - List / Delete Documents
+```bash
+GET /v1/rag/documents
+DELETE /v1/rag/documents/{chunk_id}
+```
+
+### RAG - Async Ingestion
+```bash
+# Start in background
+POST /v1/rag/ingest?background=true
+# Response: {"job_id": "uuid", "status": "pending"}
+
+# Poll status
+GET /v1/rag/jobs/{job_id}
+# Response: {"job_id": "...", "status": "done", "result": {...}}
+```
+
+### RAG-embedded Chat
+```bash
+POST /v1/chat/completions?use_rag=true
+# Retrieves top-5 relevant chunks, injects as system context
+# Response includes: {"content": "...", "sources": [{"content": "...", "score": 0.92}]}
+```
+
+### Evals
+```bash
+# LLM Judge score
+POST /v1/evals/judge
+{"messages": [...], "response": "...", "criteria": "helpfulness"}
+
+# Submit feedback
+POST /v1/evals/feedback
+{"message_id": "...", "rating": 1, "comment": "..."}
+
+# Get feedback log
+GET /v1/evals/feedback
+
+# Run RAG metrics
+POST /v1/evals/rag
+{"question": "...", "answer": "...", "contexts": [...], "ground_truth": "..."}
+
+# A/B experiments
+POST /v1/evals/ab/experiments
+GET /v1/evals/ab/experiments/{id}/stats
+```
+
+### Prometheus Metrics
+```bash
+GET /metrics
+# Returns Prometheus-format metrics: request counts, latency, token usage, costs
+```
+
 **Full API docs:** http://localhost:8000/docs
 
 ---
@@ -516,8 +594,8 @@ The RAG system is also exposed via REST endpoints - see the [API Reference](#-ap
 3. Handle `tools` and `response_format` parameters
 4. Register in `registry.py` and configure in `models.yaml`
 
-**Currently supported:** OpenAI, Anthropic, Ollama, vLLM
-**Easy to add:** Cohere, Google Gemini, Mistral AI, any OpenAI-compatible API
+**Currently supported:** OpenAI, Anthropic, Google Gemini, Cohere, Ollama, vLLM
+**Easy to add:** Mistral AI, any OpenAI-compatible API
 
 ### Adding New Vector Stores
 
@@ -563,13 +641,18 @@ docker-compose down
 | **RAG** | Chunking | ✅ Done | Recursive, semantic, token, fixed |
 | **RAG** | Hybrid Search | ✅ Done | BM25 + semantic search with RRF fusion |
 | **Edge AI** | Ollama Adapter | ✅ Done | Local inference (Llama3, Mistral, Phi-3) |
-| **Evals** | RAG Evaluation | 🔜 Planned | Ragas integration |
-| **Evals** | LLM Response Eval | 🔜 Planned | Unit testing for AI |
-| **Evals** | Prompt A/B Testing | 🔜 Planned | Systematic prompt optimization |
+| **Evals** | RAG Evaluation | ✅ Done | Ragas + LLM-judge fallback (faithfulness, relevancy, precision, recall) |
+| **Evals** | LLM Response Eval | ✅ Done | LLMJudge (0-10 scorer) + "Rate This" UI |
+| **Evals** | Prompt A/B Testing | ✅ Done | ABRouter with round-robin & weighted-random |
+| **Observability** | Prometheus | ✅ Done | `/metrics` endpoint, Prometheus-compatible |
+| **Adapters** | Gemini Adapter | ✅ Done | gemini-2.0-flash, gemini-1.5-pro/flash |
+| **Adapters** | Cohere Adapter | ✅ Done | Command R+, Command R |
+| **Enterprise** | API Key Auth | ✅ Done | Bearer token; disabled when keys unset |
+| **Enterprise** | Rate Limiting | ✅ Done | Per-key sliding window, 429 + Retry-After |
+| **Enterprise** | Async Ingestion | ✅ Done | `background=true` + job polling |
 | **Agentic** | MCP Integration | 🔜 Planned | Model Context Protocol |
 | **Agentic** | Agent Framework | 🔜 Planned | LangGraph/tool-using agents |
 | **Agentic** | Human-in-the-loop | 🔜 Planned | Approval workflows |
-| **Observability** | Prometheus | 🔜 Planned | Metrics exporter |
 | **Observability** | LangSmith/W&B | 🔜 Planned | Tracing integration |
 | **Edge AI** | llama.cpp/ONNX | 🔜 Planned | Quantized model support |
 | **Multimodal** | Vision Support | 🔜 Planned | GPT-4o, Gemini Vision |
@@ -577,16 +660,6 @@ docker-compose down
 | **Governance** | Prompt Injection Defense | 🔜 Planned | Security hardening |
 | **Governance** | PII Masking | 🔜 Planned | Data privacy |
 | **Governance** | Content Moderation | 🔜 Planned | Guardrails |
-
-### Persistence & Auth (Future)
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| Conversation persistence | 🔜 Planned | SQLite/PostgreSQL |
-| User authentication | 🔜 Planned | Sessions & auth |
-| Rate limiting | 🔜 Planned | Request throttling |
-| Redis caching | 🔜 Planned | Response caching |
-| Admin dashboard | 🔜 Planned | Management UI |
 
 ---
 
@@ -600,7 +673,7 @@ This project is open-source and available for use in personal or commercial proj
 
 ## 🙏 Acknowledgments
 
-Built with: **FastAPI**, **React**, **Ollama**, **vLLM**, **Docker**, **Tailwind CSS**, **Pydantic**, **Nginx**
+Built with: **FastAPI**, **React**, **Ollama**, **vLLM**, **Docker**, **Tailwind CSS**, **Pydantic**, **Nginx**, **Prometheus**
 
 Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
@@ -610,4 +683,4 @@ Vector stores: **ChromaDB**, **Pinecone**, **Qdrant**, **Weaviate**
 
 ---
 
-*FAIForge v2.3 - Production-ready AI infrastructure for modern applications* 🚀
+*FAIForge v2.5 - Production-ready AI infrastructure for modern applications* 🚀
