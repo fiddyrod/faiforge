@@ -26,6 +26,8 @@ logger.info("Starting FAIForge application", extra={
 # Get API keys from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+cohere_api_key = os.getenv("COHERE_API_KEY")
 
 if not openai_api_key:
     logger.error("OPENAI_API_KEY not found in environment variables")
@@ -37,7 +39,9 @@ logger.info("Creating FastAPI application")
 app = create_app(
     config=config,
     openai_api_key=openai_api_key,
-    anthropic_api_key=anthropic_api_key
+    anthropic_api_key=anthropic_api_key,
+    gemini_api_key=gemini_api_key,
+    cohere_api_key=cohere_api_key,
 )
 
 logger.info("FAIForge application created successfully")

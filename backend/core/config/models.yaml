@@ -22,6 +22,28 @@ models:
     model: claude-opus-4-20250514
     description: Most capable Claude model
 
+  # Google Gemini Models
+  gemini-flash:
+    adapter: gemini
+    model: gemini-2.0-flash
+    description: Fast and affordable Gemini model
+
+  gemini-pro:
+    adapter: gemini
+    model: gemini-1.5-pro
+    description: Large context Gemini model
+
+  # Cohere Models
+  command-r-plus:
+    adapter: cohere
+    model: command-r-plus
+    description: Cohere Command R+ for RAG and tool use
+
+  command-r:
+    adapter: cohere
+    model: command-r
+    description: Cohere Command R, balanced performance
+
   # vLLM Local Models
   tiny-llama:
     adapter: vllm

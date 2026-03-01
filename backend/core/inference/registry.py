@@ -17,7 +17,11 @@ from .adapters import (
     OpenAIAdapter,
     AnthropicAdapter,
     VLLMAdapter,
-    VLLM_AVAILABLE
+    VLLM_AVAILABLE,
+    GeminiAdapter,
+    GEMINI_AVAILABLE,
+    CohereAdapter,
+    COHERE_AVAILABLE,
 )
 from .fallback import (
     FallbackAdapter,
@@ -110,7 +114,9 @@ def _create_adapter(
     model_config: Dict[str, Any],
     openai_api_key: str,
     anthropic_api_key: Optional[str],
-    load_vllm: bool
+    load_vllm: bool,
+    gemini_api_key: Optional[str] = None,
+    cohere_api_key: Optional[str] = None,
 ) -> Optional[LLMAdapter]:
     """Create a single adapter based on type"""
 
@@ -122,21 +128,44 @@ def _create_adapter(
 
     elif adapter_type == "anthropic":
         if not anthropic_api_key:
-            logger.warning(f"Skipping Anthropic model - ANTHROPIC_API_KEY not set")
+            logger.warning("Skipping Anthropic model - ANTHROPIC_API_KEY not set")
             return None
         return AnthropicAdapter(
             api_key=anthropic_api_key,
             model=model_config["model"]
         )
 
+    elif adapter_type == "gemini":
+        if not GEMINI_AVAILABLE:
+            logger.warning("Skipping Gemini model - google-generativeai not installed")
+            return None
+        if not gemini_api_key:
+            logger.warning("Skipping Gemini model - GEMINI_API_KEY not set")
+            return None
+        return GeminiAdapter(
+            api_key=gemini_api_key,
+            model=model_config["model"]
+        )
+
+    elif adapter_type == "cohere":
+        if not COHERE_AVAILABLE:
+            logger.warning("Skipping Cohere model - cohere not installed")
+            return None
+        if not cohere_api_key:
+            logger.warning("Skipping Cohere model - COHERE_API_KEY not set")
+            return None
+        return CohereAdapter(
+            api_key=cohere_api_key,
+            model=model_config["model"]
+        )
+
     elif adapter_type == "vllm":
         if not VLLM_AVAILABLE:
-            logger.warning(f"Skipping vLLM model - vLLM not installed")
+            logger.warning("Skipping vLLM model - vLLM not installed")
             return None
         if not load_vllm:
-            logger.info(f"Skipping vLLM model - vLLM loading disabled")
+            logger.info("Skipping vLLM model - vLLM loading disabled")
             return None
-
         return VLLMAdapter(
             model=model_config["model"],
             max_model_len=model_config.get("max_model_len", 2048),
@@ -241,7 +270,9 @@ def load_registry(
     openai_api_key: str,
     anthropic_api_key: Optional[str] = None,
     load_vllm: bool = True,
-    routing_config_path: Optional[str] = None
+    routing_config_path: Optional[str] = None,
+    gemini_api_key: Optional[str] = None,
+    cohere_api_key: Optional[str] = None,
 ) -> ModelRegistry:
     """
     Load models from YAML configuration with optional fallback/routing support.
@@ -252,6 +283,8 @@ def load_registry(
         anthropic_api_key: Anthropic API key (optional)
         load_vllm: Whether to load vLLM models
         routing_config_path: Path to routing.yaml (optional)
+        gemini_api_key: Google Gemini API key (optional)
+        cohere_api_key: Cohere API key (optional)
     """
     config_file = Path(config_path)
     if not config_file.exists():
@@ -271,7 +304,9 @@ def load_registry(
             model_config=model_config,
             openai_api_key=openai_api_key,
             anthropic_api_key=anthropic_api_key,
-            load_vllm=load_vllm
+            load_vllm=load_vllm,
+            gemini_api_key=gemini_api_key,
+            cohere_api_key=cohere_api_key,
         )
 
         if adapter:
