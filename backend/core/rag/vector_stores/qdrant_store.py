@@ -338,6 +338,48 @@ class QdrantStore(VectorStoreAdapter):
             )
             raise
 
+    async def list_documents(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """List documents using Qdrant's scroll API."""
+        try:
+            info = self.client.get_collection(self._collection_name)
+            total = info.points_count or 0
+
+            qdrant_filter = None
+            if filters:
+                qdrant_filter = models.Filter(must=[
+                    models.FieldCondition(key=k, match=models.MatchValue(value=v))
+                    for k, v in filters.items()
+                ])
+
+            results, _ = self.client.scroll(
+                collection_name=self._collection_name,
+                scroll_filter=qdrant_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            docs = []
+            for point in results:
+                payload = point.payload or {}
+                docs.append({
+                    "id": str(point.id),
+                    "content": str(payload.pop("content", ""))[:300],
+                    "metadata": payload,
+                })
+            return {"documents": docs, "total": total, "limit": limit, "offset": offset}
+        except Exception as e:
+            log_with_context(
+                self.logger, "error", f"Qdrant list documents failed: {str(e)}",
+                event="vector_store_list_error", provider="qdrant", error=str(e)
+            )
+            raise
+
     async def clear_collection(self) -> Dict[str, Any]:
         """Clear all documents from collection"""
 

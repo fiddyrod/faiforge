@@ -5,9 +5,12 @@
 -r requirements.txt
 
 # Local Model Serving
-vllm>=0.2.0
+vllm>=0.5.0  # 0.2.x API is incompatible; current production is 0.11.x
 
 # Note: vLLM will automatically install:
 # - torch
 # - transformers
 # - All NVIDIA CUDA libraries
+# WSL note: vLLM embedded mode crashes due to CUDA subprocess issues.
+# Use: python -m vllm.entrypoints.openai.api_server --model <model> --port 8001
+# Then add the model as adapter: ollama with base_url: http://localhost:8001/v1

@@ -324,6 +324,46 @@ class ChromaStore(VectorStoreAdapter):
             )
             raise
 
+    async def list_documents(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """List documents with their IDs and metadata (no embeddings)."""
+        try:
+            kwargs: Dict[str, Any] = {
+                "limit": limit,
+                "offset": offset,
+                "include": ["documents", "metadatas"],
+            }
+            if filters:
+                kwargs["where"] = filters
+
+            result = self.collection.get(**kwargs)
+            docs = []
+            for i, doc_id in enumerate(result["ids"]):
+                docs.append({
+                    "id": doc_id,
+                    "content": result["documents"][i][:300] if result["documents"] else "",
+                    "metadata": result["metadatas"][i] if result["metadatas"] else {},
+                })
+            return {
+                "documents": docs,
+                "total": self.collection.count(),
+                "limit": limit,
+                "offset": offset,
+            }
+        except Exception as e:
+            log_with_context(
+                self.logger, "error",
+                f"ChromaDB list documents failed: {str(e)}",
+                event="vector_store_list_error",
+                provider="chromadb",
+                error=str(e),
+            )
+            raise
+
     async def get_collection_info(self) -> Dict[str, Any]:
         """Get collection statistics and info"""
 

@@ -12,4 +12,4 @@ observability:
   log_level: "DEBUG"
 
 models:
-  load_vllm: true
+  load_vllm: false  # vLLM crashes in WSL due to CUDA subprocess; enable on bare-metal Linux

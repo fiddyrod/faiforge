@@ -353,6 +353,46 @@ class WeaviateStore(VectorStoreAdapter):
             )
             raise
 
+    async def list_documents(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """List documents using Weaviate's fetch_objects API."""
+        try:
+            agg = self.collection.aggregate.over_all(total_count=True)
+            total = agg.total_count or 0
+
+            # Build optional where filter
+            where_filter = None
+            if filters and weaviate:
+                from weaviate.classes.query import Filter
+                conditions = [Filter.by_property(k).equal(v) for k, v in filters.items()]
+                where_filter = conditions[0] if len(conditions) == 1 else Filter.all_of(conditions)
+
+            result = self.collection.query.fetch_objects(
+                limit=limit,
+                offset=offset,
+                filters=where_filter,
+                include_vector=False,
+            )
+            docs = []
+            for obj in result.objects:
+                props = dict(obj.properties)
+                docs.append({
+                    "id": str(obj.uuid),
+                    "content": str(props.pop("content", ""))[:300],
+                    "metadata": props,
+                })
+            return {"documents": docs, "total": total, "limit": limit, "offset": offset}
+        except Exception as e:
+            log_with_context(
+                self.logger, "error", f"Weaviate list documents failed: {str(e)}",
+                event="vector_store_list_error", provider="weaviate", error=str(e)
+            )
+            raise
+
     async def clear_collection(self) -> Dict[str, Any]:
         """Clear all documents from class"""
 

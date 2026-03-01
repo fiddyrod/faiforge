@@ -11,10 +11,12 @@ from .base import (
 from ...observability import get_logger, log_with_context
 
 # Optional import for Pinecone
+# Note: old `pinecone-client` package raises a plain Exception (not ImportError) on import.
+# Catch both so the server starts gracefully without pinecone installed.
 try:
     from pinecone import Pinecone, ServerlessSpec
     PINECONE_AVAILABLE = True
-except ImportError:
+except Exception:
     Pinecone = None
     ServerlessSpec = None
     PINECONE_AVAILABLE = False
@@ -344,6 +346,43 @@ class PineconeStore(VectorStoreAdapter):
                 provider="pinecone",
                 error=str(e),
                 error_type=type(e).__name__
+            )
+            raise
+
+    async def list_documents(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """List documents using Pinecone's list + fetch API."""
+        try:
+            stats = self.index.describe_index_stats()
+            total = stats.get("total_vector_count", 0)
+
+            # list() returns an iterator of ID batches; fetch metadata for each
+            ids_page = []
+            for id_batch in self.index.list(limit=limit):
+                ids_page.extend(id_batch)
+                if len(ids_page) >= limit + offset:
+                    break
+
+            ids_page = ids_page[offset: offset + limit]
+            docs = []
+            if ids_page:
+                fetch_resp = self.index.fetch(ids=ids_page)
+                for doc_id, vec in (fetch_resp.get("vectors") or {}).items():
+                    meta = vec.get("metadata", {})
+                    docs.append({
+                        "id": doc_id,
+                        "content": meta.pop("content", "")[:300],
+                        "metadata": meta,
+                    })
+            return {"documents": docs, "total": total, "limit": limit, "offset": offset}
+        except Exception as e:
+            log_with_context(
+                self.logger, "error", f"Pinecone list documents failed: {str(e)}",
+                event="vector_store_list_error", provider="pinecone", error=str(e)
             )
             raise
 

@@ -1,13 +1,20 @@
-import { useState, useRef } from 'react'
-import { Send, Loader2, Trash2, Upload, Search, Database, BarChart3, FileText, X, ChevronDown } from 'lucide-react'
+import { useState, useRef, useCallback } from 'react'
+import { Send, Loader2, Trash2, Upload, Search, Database, BarChart3, FileText, X, ChevronDown, Zap } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface RAGSource {
+  content: string
+  score: number
+  metadata: Record<string, unknown>
+}
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  sources?: RAGSource[]
 }
 
 interface APIResponse {
@@ -16,6 +23,7 @@ interface APIResponse {
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
   cost_usd: number
   latency_ms: number
+  sources?: RAGSource[]
 }
 
 interface RAGResult {
@@ -46,6 +54,40 @@ interface CacheStats {
 
 // ─── Chat Tab ─────────────────────────────────────────────────────────────────
 
+function SourcesPanel({ sources }: { sources: RAGSource[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 font-medium transition-colors"
+      >
+        <Database className="w-3 h-3" />
+        {sources.length} source{sources.length !== 1 ? 's' : ''}
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {sources.map((src, i) => (
+            <div key={i} className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-purple-700">Source {i + 1}</span>
+                <span className="text-xs font-mono text-purple-500 bg-purple-100 px-1.5 py-0.5 rounded">
+                  {src.score.toFixed(4)}
+                </span>
+              </div>
+              <p className="text-xs text-gray-700 leading-relaxed">{src.content}</p>
+              {src.metadata.source && (
+                <p className="text-xs text-gray-400 mt-1">— {String(src.metadata.source)}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChatTab() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -53,8 +95,11 @@ function ChatTab() {
   const [loading, setLoading] = useState(false)
   const [lastResponse, setLastResponse] = useState<APIResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [ragEnabled, setRagEnabled] = useState(false)
+  const [rerankEnabled, setRerankEnabled] = useState(false)
+  const [streamEnabled, setStreamEnabled] = useState(false)
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     if (!input.trim() || loading) return
     const userMessage: Message = { role: 'user', content: input }
     const newMessages = [...messages, userMessage]
@@ -63,44 +108,165 @@ function ChatTab() {
     setLoading(true)
     setError(null)
 
-    try {
-      const response = await fetch(`${API_URL}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, model, temperature: 0.7, max_tokens: 500 })
-      })
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `API error: ${response.status}`)
+    const url = `${API_URL}/v1/chat/completions?use_rag=${ragEnabled}&use_rerank=${rerankEnabled}&stream=${streamEnabled}`
+
+    if (!streamEnabled) {
+      // ── Non-streaming path ──────────────────────────────────────────────
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: newMessages, model, temperature: 0.7, max_tokens: 500 })
+        })
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.detail || `API error: ${response.status}`)
+        }
+        const data: APIResponse = await response.json()
+        setMessages([...newMessages, {
+          role: 'assistant',
+          content: data.content,
+          sources: data.sources ?? undefined,
+        }])
+        setLastResponse(data)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to get response')
+        setMessages(newMessages.slice(0, -1))
+      } finally {
+        setLoading(false)
       }
-      const data: APIResponse = await response.json()
-      setMessages([...newMessages, { role: 'assistant', content: data.content }])
-      setLastResponse(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get response')
-      setMessages(messages)
-    } finally {
-      setLoading(false)
+    } else {
+      // ── Streaming path ──────────────────────────────────────────────────
+      // Push a placeholder assistant message we'll update as chunks arrive
+      const assistantIdx = newMessages.length
+      setMessages([...newMessages, { role: 'assistant', content: '' }])
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: newMessages, model, temperature: 0.7, max_tokens: 500 })
+        })
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.detail || `API error: ${response.status}`)
+        }
+
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullContent = ''
+        let doneSeen = false
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const raw = line.slice(6).trim()
+            if (raw === '[DONE]') { doneSeen = true; continue }
+            try {
+              const chunk = JSON.parse(raw)
+              if (chunk.error) throw new Error(chunk.error)
+
+              // Sources event (arrives after [DONE])
+              if (doneSeen && chunk.sources) {
+                setMessages(prev => prev.map((m, i) =>
+                  i === assistantIdx ? { ...m, sources: chunk.sources } : m
+                ))
+                continue
+              }
+
+              if (chunk.content) {
+                fullContent += chunk.content
+                setMessages(prev => prev.map((m, i) =>
+                  i === assistantIdx ? { ...m, content: fullContent } : m
+                ))
+              }
+
+              if (chunk.usage) {
+                setLastResponse({
+                  content: fullContent,
+                  model,
+                  usage: chunk.usage,
+                  cost_usd: 0,
+                  latency_ms: 0,
+                })
+              }
+            } catch {
+              // ignore parse errors on individual chunks
+            }
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Streaming failed')
+        setMessages(prev => prev.slice(0, assistantIdx))
+      } finally {
+        setLoading(false)
+      }
     }
-  }
+  }, [input, loading, messages, model, ragEnabled, streamEnabled])
 
   return (
     <div className="flex flex-col h-full">
-      {/* Model selector */}
+      {/* Model selector + RAG toggle */}
       <div className="flex items-center justify-between p-3 border-b border-gray-100 bg-gray-50">
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="gpt-4o-mini">GPT-4o Mini</option>
-          <option value="gpt-4o">GPT-4o</option>
-          <option value="claude-sonnet">Claude Sonnet</option>
-          <option value="claude-opus">Claude Opus</option>
-          <option value="ollama/phi3">Ollama Phi-3 (Local)</option>
-          <option value="ollama/llama3">Ollama Llama3 (Local)</option>
-          <option value="ollama/mistral">Ollama Mistral (Local)</option>
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="claude-sonnet">Claude Sonnet</option>
+            <option value="claude-opus">Claude Opus</option>
+            <option value="ollama/phi3">Ollama Phi-3 (Local)</option>
+            <option value="ollama/llama3">Ollama Llama3 (Local)</option>
+            <option value="ollama/mistral">Ollama Mistral (Local)</option>
+          </select>
+          <button
+            onClick={() => setRagEnabled(r => !r)}
+            title="Toggle RAG context injection"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              ragEnabled
+                ? 'bg-purple-500 text-white border-purple-500 shadow-sm'
+                : 'bg-white text-gray-500 border-gray-300 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-300'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            RAG
+          </button>
+          <button
+            onClick={() => setRerankEnabled(r => !r)}
+            title="Apply cross-encoder reranking to RAG results (requires RAG)"
+            disabled={!ragEnabled}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              rerankEnabled && ragEnabled
+                ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                : 'bg-white text-gray-500 border-gray-300 hover:bg-green-50 hover:text-green-600 hover:border-green-300'
+            }`}
+          >
+            <Search className="w-3.5 h-3.5" />
+            Rerank
+          </button>
+          <button
+            onClick={() => setStreamEnabled(s => !s)}
+            title="Toggle streaming response"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              streamEnabled
+                ? 'bg-amber-400 text-white border-amber-400 shadow-sm'
+                : 'bg-white text-gray-500 border-gray-300 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-300'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Stream
+          </button>
+        </div>
         {messages.length > 0 && (
           <button onClick={() => { setMessages([]); setLastResponse(null); setError(null) }}
             className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
@@ -116,14 +282,28 @@ function ChatTab() {
             <div className="text-5xl mb-3">🔥</div>
             <p className="font-medium">No messages yet</p>
             <p className="text-sm mt-1">Send a message to start chatting</p>
+            {(ragEnabled || streamEnabled) && (
+              <p className="text-xs text-gray-400 mt-2 flex items-center justify-center gap-2">
+                {ragEnabled && <span className="text-purple-500 font-medium">RAG</span>}
+                {ragEnabled && rerankEnabled && <span className="text-green-500 font-medium">+ Rerank</span>}
+                {streamEnabled && <span className="text-amber-500 font-medium">Stream</span>}
+              </p>
+            )}
           </div>
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-xl px-4 py-3 rounded-xl text-sm whitespace-pre-wrap leading-relaxed ${
-              msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white border border-gray-200 text-gray-900 shadow-sm'
-            }`}>
-              {msg.content}
+            <div className={`max-w-xl ${msg.role === 'user' ? '' : 'w-full'}`}>
+              <div className={`px-4 py-3 rounded-xl text-sm whitespace-pre-wrap leading-relaxed ${
+                msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white border border-gray-200 text-gray-900 shadow-sm'
+              }`}>
+                {msg.content}
+              </div>
+              {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                <div className="px-1">
+                  <SourcesPanel sources={msg.sources} />
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -552,7 +732,7 @@ export default function App() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-900">FAIForge</h1>
-            <p className="text-xs text-gray-400">Production AI Boilerplate · v2.2</p>
+            <p className="text-xs text-gray-400">Production AI Boilerplate · v2.3</p>
           </div>
           <nav className="flex gap-1">
             {tabs.map(tab => (

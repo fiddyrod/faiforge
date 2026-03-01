@@ -108,6 +108,21 @@ class VectorStoreAdapter(ABC):
         pass
 
     @abstractmethod
+    async def list_documents(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """List documents with their IDs and metadata (no embeddings).
+
+        Returns:
+            Dict with keys: documents (list of {id, content, metadata}),
+            total (total count in collection), limit, offset.
+        """
+        pass
+
+    @abstractmethod
     async def get_collection_info(self) -> Dict[str, Any]:
         """Get collection statistics and info"""
         pass
